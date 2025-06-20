@@ -20,7 +20,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
 
     try {
-      const url = isRegister ? 'http://localhost:5000/api/register' : 'http://localhost:5000/api/login';
+      const url = isRegister ? 'http://localhost:3001/api/register' : 'http://localhost:3001/api/login';
       const body = isRegister 
         ? { name: formData.name, email: formData.email, password: formData.password }
         : { email: formData.email, password: formData.password };

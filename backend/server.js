@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3001;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 // Middleware
@@ -158,6 +158,140 @@ app.get('/api/profile', authenticateToken, (req, res) => {
         return res.status(500).json({ error: 'Database error' });
       }
       res.json(practice);
+    }
+  );
+});
+
+// Lens Brand Management Routes
+
+// Get all lens brands for a practice
+app.get('/api/lens-brands', authenticateToken, (req, res) => {
+  db.all(
+    'SELECT * FROM lens_brands WHERE practice_id = ? ORDER BY brand_name',
+    [req.user.id],
+    (err, brands) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      res.json(brands);
+    }
+  );
+});
+
+// Add a new lens brand
+app.post('/api/lens-brands', authenticateToken, (req, res) => {
+  const {
+    brand_name,
+    replacement_schedule,
+    practice_price_per_box,
+    competitor_price_per_box,
+    new_wearer_rebate,
+    existing_wearer_rebate
+  } = req.body;
+
+  if (!brand_name || !replacement_schedule || !practice_price_per_box || !competitor_price_per_box) {
+    return res.status(400).json({ error: 'All required fields must be provided' });
+  }
+
+  // Calculate boxes per annual supply based on replacement schedule
+  const boxesPerAnnual = {
+    'daily': 12,      // 30 lenses per box, 360 per year
+    'weekly': 9,      // 6 lenses per box, 52 per year
+    'biweekly': 4,    // 6 lenses per box, 26 per year  
+    'monthly': 4      // 3-6 lenses per box, 12 per year
+  };
+
+  const boxes_per_annual = boxesPerAnnual[replacement_schedule] || 4;
+
+  db.run(
+    `INSERT INTO lens_brands 
+     (practice_id, brand_name, replacement_schedule, practice_price_per_box, 
+      competitor_price_per_box, new_wearer_rebate, existing_wearer_rebate, boxes_per_annual) 
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      req.user.id,
+      brand_name,
+      replacement_schedule,
+      practice_price_per_box,
+      competitor_price_per_box,
+      new_wearer_rebate || 0,
+      existing_wearer_rebate || 0,
+      boxes_per_annual
+    ],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      res.status(201).json({
+        message: 'Lens brand added successfully',
+        id: this.lastID
+      });
+    }
+  );
+});
+
+// Update a lens brand
+app.put('/api/lens-brands/:id', authenticateToken, (req, res) => {
+  const {
+    brand_name,
+    replacement_schedule,
+    practice_price_per_box,
+    competitor_price_per_box,
+    new_wearer_rebate,
+    existing_wearer_rebate
+  } = req.body;
+
+  const boxesPerAnnual = {
+    'daily': 12,
+    'weekly': 9,
+    'biweekly': 4,
+    'monthly': 4
+  };
+
+  const boxes_per_annual = boxesPerAnnual[replacement_schedule] || 4;
+
+  db.run(
+    `UPDATE lens_brands 
+     SET brand_name = ?, replacement_schedule = ?, practice_price_per_box = ?, 
+         competitor_price_per_box = ?, new_wearer_rebate = ?, existing_wearer_rebate = ?,
+         boxes_per_annual = ?
+     WHERE id = ? AND practice_id = ?`,
+    [
+      brand_name,
+      replacement_schedule,
+      practice_price_per_box,
+      competitor_price_per_box,
+      new_wearer_rebate || 0,
+      existing_wearer_rebate || 0,
+      boxes_per_annual,
+      req.params.id,
+      req.user.id
+    ],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Lens brand not found' });
+      }
+      res.json({ message: 'Lens brand updated successfully' });
+    }
+  );
+});
+
+// Delete a lens brand
+app.delete('/api/lens-brands/:id', authenticateToken, (req, res) => {
+  db.run(
+    'DELETE FROM lens_brands WHERE id = ? AND practice_id = ?',
+    [req.params.id, req.user.id],
+    function(err) {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      if (this.changes === 0) {
+        return res.status(404).json({ error: 'Lens brand not found' });
+      }
+      res.json({ message: 'Lens brand deleted successfully' });
     }
   );
 });
