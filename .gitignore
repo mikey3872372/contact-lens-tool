@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+*/node_modules/
+
+# Production builds  
+build/
+dist/
+
+# Environment variables
+.env
+backend/.env
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+npm-debug.log*
+
+# OS files
+.DS_Store
