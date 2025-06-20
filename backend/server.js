@@ -296,6 +296,82 @@ app.delete('/api/lens-brands/:id', authenticateToken, (req, res) => {
   );
 });
 
+// Price Comparison Calculation Route
+app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
+  const { lens_brand_id, insurance_benefit, is_new_wearer } = req.body;
+
+  if (!lens_brand_id) {
+    return res.status(400).json({ error: 'Lens brand ID is required' });
+  }
+
+  // Get lens brand details
+  db.get(
+    'SELECT * FROM lens_brands WHERE id = ? AND practice_id = ?',
+    [lens_brand_id, req.user.id],
+    (err, brand) => {
+      if (err) {
+        return res.status(500).json({ error: 'Database error' });
+      }
+      
+      if (!brand) {
+        return res.status(404).json({ error: 'Lens brand not found' });
+      }
+
+      // Calculate totals
+      const practiceSubtotal = brand.practice_price_per_box * brand.boxes_per_annual;
+      const competitorSubtotal = brand.competitor_price_per_box * brand.boxes_per_annual;
+      
+      // Apply rebate based on wearer status
+      const rebateAmount = is_new_wearer ? brand.new_wearer_rebate : brand.existing_wearer_rebate;
+      
+      // Apply insurance benefit (defaults to 0 if not provided)
+      const insuranceBenefit = insurance_benefit || 0;
+      
+      // Calculate final amounts
+      const practiceAfterRebate = Math.max(0, practiceSubtotal - rebateAmount);
+      const practiceFinalAmount = Math.max(0, practiceAfterRebate - insuranceBenefit);
+      
+      // Competitor doesn't get rebates or insurance benefits in our comparison
+      const competitorFinalAmount = competitorSubtotal;
+      
+      // Calculate savings
+      const totalSavings = competitorFinalAmount - practiceFinalAmount;
+      
+      const comparison = {
+        brand: {
+          id: brand.id,
+          name: brand.brand_name,
+          replacement_schedule: brand.replacement_schedule,
+          boxes_per_annual: brand.boxes_per_annual
+        },
+        practice: {
+          price_per_box: brand.practice_price_per_box,
+          subtotal: practiceSubtotal,
+          rebate_applied: rebateAmount,
+          insurance_applied: insuranceBenefit,
+          final_amount: practiceFinalAmount
+        },
+        competitor: {
+          name: "1-800 Contacts",
+          price_per_box: brand.competitor_price_per_box,
+          subtotal: competitorSubtotal,
+          rebate_applied: 0,
+          insurance_applied: 0,
+          final_amount: competitorFinalAmount
+        },
+        savings: {
+          total_savings: totalSavings,
+          percentage_savings: competitorFinalAmount > 0 ? (totalSavings / competitorFinalAmount * 100) : 0
+        },
+        wearer_status: is_new_wearer ? 'new' : 'existing',
+        insurance_benefit: insuranceBenefit
+      };
+
+      res.json(comparison);
+    }
+  );
+});
+
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
