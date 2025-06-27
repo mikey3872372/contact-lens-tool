@@ -57,16 +57,26 @@ const authenticateToken = (req, res, next) => {
 // Routes
 app.get('/api/health', async (req, res) => {
   try {
-    await ensureDB();
-    res.json({ 
+    const response = { 
       status: 'Server is running!', 
       environment: process.env.NODE_ENV,
       timestamp: new Date().toISOString(),
-      database: 'PostgreSQL Connected'
-    });
+      database: 'Not connected'
+    };
+
+    // Try database connection
+    try {
+      await ensureDB();
+      response.database = 'PostgreSQL Connected';
+    } catch (dbError) {
+      console.error('Health check - DB error:', dbError.message);
+      response.database = `Error: ${dbError.message}`;
+    }
+
+    res.json(response);
   } catch (error) {
     res.status(500).json({ 
-      status: 'Database error',
+      status: 'Server error',
       error: error.message 
     });
   }
@@ -114,14 +124,13 @@ app.post('/api/register', async (req, res) => {
 // User login
 app.post('/api/login', async (req, res) => {
   try {
-    await ensureDB();
     const { email, password } = req.body;
   
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Special case for master admin - hardcoded for demo
+    // Special case for master admin - hardcoded bypass (no DB needed)
     if (email === 'admin@contactlenstool.com' && password === 'masteradmin123') {
       const token = jwt.sign({ id: 1, email: email }, JWT_SECRET);
       return res.json({
@@ -129,6 +138,14 @@ app.post('/api/login', async (req, res) => {
         token,
         practice: { id: 1, name: 'Master Admin', email: email }
       });
+    }
+
+    // For other users, try database
+    try {
+      await ensureDB();
+    } catch (dbError) {
+      console.error('Database connection error:', dbError);
+      return res.status(500).json({ error: 'Database connection failed. Please try again later.' });
     }
 
     const result = await pool.query('SELECT * FROM practices WHERE email = $1', [email]);
