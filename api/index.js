@@ -27,14 +27,8 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Initialize database on first request
-let dbInitialized = false;
-async function ensureDB() {
-  if (!dbInitialized) {
-    await initializeDatabase();
-    dbInitialized = true;
-  }
-}
+// Initialize database on startup
+initializeDatabase().catch(console.error);
 
 // Auth middleware
 const authenticateToken = (req, res, next) => {
@@ -57,26 +51,17 @@ const authenticateToken = (req, res, next) => {
 // Routes
 app.get('/api/health', async (req, res) => {
   try {
-    const response = { 
+    const result = await pool.query('SELECT NOW()');
+    res.json({ 
       status: 'Server is running!', 
       environment: process.env.NODE_ENV,
       timestamp: new Date().toISOString(),
-      database: 'Not connected'
-    };
-
-    // Try database connection
-    try {
-      await ensureDB();
-      response.database = 'PostgreSQL Connected';
-    } catch (dbError) {
-      console.error('Health check - DB error:', dbError.message);
-      response.database = `Error: ${dbError.message}`;
-    }
-
-    res.json(response);
+      database: 'Connected',
+      db_time: result.rows[0].now
+    });
   } catch (error) {
     res.status(500).json({ 
-      status: 'Server error',
+      status: 'Database error',
       error: error.message 
     });
   }
@@ -84,13 +69,12 @@ app.get('/api/health', async (req, res) => {
 
 // Root route for testing
 app.get('/', (req, res) => {
-  res.json({ message: 'Contact Lens Tool API is running with PostgreSQL' });
+  res.json({ message: 'Contact Lens Tool API is running' });
 });
 
 // User registration
 app.post('/api/register', async (req, res) => {
   try {
-    await ensureDB();
     const { name, email, password } = req.body;
     
     if (!name || !email || !password) {
@@ -130,7 +114,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    // Special case for master admin - hardcoded bypass (no DB needed)
+    // Special case for master admin - hardcoded for demo
     if (email === 'admin@contactlenstool.com' && password === 'masteradmin123') {
       const token = jwt.sign({ id: 1, email: email }, JWT_SECRET);
       return res.json({
@@ -138,14 +122,6 @@ app.post('/api/login', async (req, res) => {
         token,
         practice: { id: 1, name: 'Master Admin', email: email }
       });
-    }
-
-    // For other users, try database
-    try {
-      await ensureDB();
-    } catch (dbError) {
-      console.error('Database connection error:', dbError);
-      return res.status(500).json({ error: 'Database connection failed. Please try again later.' });
     }
 
     const result = await pool.query('SELECT * FROM practices WHERE email = $1', [email]);
@@ -178,7 +154,6 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
     const result = await pool.query('SELECT id, name, email FROM practices WHERE id = $1', [req.user.id]);
     res.json(result.rows[0]);
   } catch (error) {
-    console.error('Profile error:', error);
     res.status(500).json({ error: 'Database error' });
   }
 });
@@ -190,8 +165,6 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 // Get all global brands (master admin only)
 app.get('/api/admin/global-brands', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
-    
     // Check if user is master admin (hardcoded check for demo)
     if (req.user.email === 'admin@contactlenstool.com') {
       const result = await pool.query('SELECT * FROM global_lens_brands ORDER BY brand_name');
@@ -208,8 +181,6 @@ app.get('/api/admin/global-brands', authenticateToken, async (req, res) => {
 // Add/Update global brand (master admin only)
 app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
-    
     const {
       brand_name,
       boxes_per_annual,
@@ -233,12 +204,13 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
     
     if (id) {
       // Update existing brand
-      await pool.query(`
+      const result = await pool.query(`
         UPDATE global_lens_brands 
         SET brand_name = $1, boxes_per_annual = $2, competitor_price_per_box = $3, 
             competitor_annual_rebate = $4, competitor_semiannual_rebate = $5, 
             competitor_first_time_discount_percent = $6
         WHERE id = $7
+        RETURNING id
       `, [
         brand_name,
         parseInt(boxes_per_annual),
@@ -248,6 +220,7 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
         parseFloat(competitor_first_time_discount_percent) || 0,
         id
       ]);
+      
       res.json({ message: 'Global brand updated successfully', id: id });
     } else {
       // Insert new brand
@@ -255,7 +228,8 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
         INSERT INTO global_lens_brands 
         (brand_name, boxes_per_annual, competitor_price_per_box, competitor_annual_rebate, 
          competitor_semiannual_rebate, competitor_first_time_discount_percent) 
-        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id
       `, [
         brand_name,
         parseInt(boxes_per_annual),
@@ -264,6 +238,7 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
         parseFloat(competitor_semiannual_rebate) || 0,
         parseFloat(competitor_first_time_discount_percent) || 0
       ]);
+      
       res.json({ message: 'Global brand created successfully', id: result.rows[0].id });
     }
   } catch (error) {
@@ -279,7 +254,6 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
 // Get available brands for practice pricing setup
 app.get('/api/available-brands', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
     const result = await pool.query(`
       SELECT 
         gb.*,
@@ -289,9 +263,10 @@ app.get('/api/available-brands', authenticateToken, async (req, res) => {
         pp.is_active as practice_active
       FROM global_lens_brands gb
       LEFT JOIN practice_pricing pp ON gb.id = pp.global_brand_id AND pp.practice_id = $1
-      WHERE gb.is_active = TRUE
+      WHERE gb.is_active = true
       ORDER BY gb.brand_name
     `, [req.user.id]);
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Available brands error:', error);
@@ -302,8 +277,6 @@ app.get('/api/available-brands', authenticateToken, async (req, res) => {
 // Update practice pricing for a brand
 app.post('/api/practice-pricing', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
-    
     const { 
       global_brand_id, 
       practice_price_per_box,
@@ -323,25 +296,43 @@ app.post('/api/practice-pricing', authenticateToken, async (req, res) => {
 
     if (existing.rows.length > 0) {
       // Update existing record
+      const updateFields = [];
+      const updateValues = [];
+      let valueIndex = 1;
+      
+      if (practice_price_per_box !== undefined) {
+        updateFields.push(`practice_price_per_box = $${valueIndex++}`);
+        updateValues.push(practice_price_per_box);
+      }
+      
+      if (practice_manufacturer_rebate_new !== undefined) {
+        updateFields.push(`practice_manufacturer_rebate_new = $${valueIndex++}`);
+        updateValues.push(practice_manufacturer_rebate_new);
+      }
+      
+      if (practice_manufacturer_rebate_existing !== undefined) {
+        updateFields.push(`practice_manufacturer_rebate_existing = $${valueIndex++}`);
+        updateValues.push(practice_manufacturer_rebate_existing);
+      }
+
+      if (updateFields.length === 0) {
+        return res.status(400).json({ error: 'At least one field to update is required' });
+      }
+
+      updateValues.push(req.user.id, global_brand_id);
+      
       await pool.query(`
         UPDATE practice_pricing 
-        SET practice_price_per_box = $1, practice_manufacturer_rebate_new = $2, 
-            practice_manufacturer_rebate_existing = $3, created_at = CURRENT_TIMESTAMP
-        WHERE practice_id = $4 AND global_brand_id = $5
-      `, [
-        practice_price_per_box || 0,
-        practice_manufacturer_rebate_new || 0,
-        practice_manufacturer_rebate_existing || 0,
-        req.user.id, 
-        global_brand_id
-      ]);
+        SET ${updateFields.join(', ')}, created_at = CURRENT_TIMESTAMP
+        WHERE practice_id = $${valueIndex++} AND global_brand_id = $${valueIndex}
+      `, updateValues);
+      
       res.json({ message: 'Practice data updated successfully' });
     } else {
       // Create new record
       await pool.query(`
         INSERT INTO practice_pricing 
-        (practice_id, global_brand_id, practice_price_per_box, practice_manufacturer_rebate_new, 
-         practice_manufacturer_rebate_existing, is_active) 
+        (practice_id, global_brand_id, practice_price_per_box, practice_manufacturer_rebate_new, practice_manufacturer_rebate_existing, is_active) 
         VALUES ($1, $2, $3, $4, $5, $6)
       `, [
         req.user.id, 
@@ -351,6 +342,7 @@ app.post('/api/practice-pricing', authenticateToken, async (req, res) => {
         practice_manufacturer_rebate_existing || 0,
         true
       ]);
+      
       res.json({ message: 'Practice data created successfully' });
     }
   } catch (error) {
@@ -362,7 +354,6 @@ app.post('/api/practice-pricing', authenticateToken, async (req, res) => {
 // Get practice settings (quarterly rebates)
 app.get('/api/practice-settings', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
     const result = await pool.query(`
       SELECT 
         new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
@@ -370,6 +361,7 @@ app.get('/api/practice-settings', authenticateToken, async (req, res) => {
       FROM practices 
       WHERE id = $1
     `, [req.user.id]);
+    
     res.json(result.rows[0] || {});
   } catch (error) {
     console.error('Practice settings error:', error);
@@ -380,7 +372,6 @@ app.get('/api/practice-settings', authenticateToken, async (req, res) => {
 // Update practice settings (quarterly rebates)
 app.post('/api/practice-settings', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
     const {
       new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
       existing_wearer_rebate_q1, existing_wearer_rebate_q2, existing_wearer_rebate_q3, existing_wearer_rebate_q4
@@ -396,6 +387,7 @@ app.post('/api/practice-settings', authenticateToken, async (req, res) => {
       existing_wearer_rebate_q1 || 0, existing_wearer_rebate_q2 || 0, existing_wearer_rebate_q3 || 0, existing_wearer_rebate_q4 || 0,
       req.user.id
     ]);
+    
     res.json({ message: 'Practice settings updated successfully' });
   } catch (error) {
     console.error('Practice settings update error:', error);
@@ -410,7 +402,6 @@ app.post('/api/practice-settings', authenticateToken, async (req, res) => {
 // Get brands available for comparison (practice has pricing set)
 app.get('/api/comparison-brands', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
     const result = await pool.query(`
       SELECT 
         gb.id, gb.brand_name, gb.boxes_per_annual, gb.competitor_price_per_box,
@@ -418,9 +409,10 @@ app.get('/api/comparison-brands', authenticateToken, async (req, res) => {
         pp.practice_price_per_box, pp.practice_manufacturer_rebate_new, pp.practice_manufacturer_rebate_existing
       FROM global_lens_brands gb
       INNER JOIN practice_pricing pp ON gb.id = pp.global_brand_id 
-      WHERE pp.practice_id = $1 AND pp.is_active = TRUE AND gb.is_active = TRUE
+      WHERE pp.practice_id = $1 AND pp.is_active = true AND gb.is_active = true
       ORDER BY gb.brand_name
     `, [req.user.id]);
+    
     res.json(result.rows);
   } catch (error) {
     console.error('Comparison brands error:', error);
@@ -431,7 +423,6 @@ app.get('/api/comparison-brands', authenticateToken, async (req, res) => {
 // Calculate price comparison
 app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
   try {
-    await ensureDB();
     const { global_brand_id, insurance_benefit, is_new_wearer } = req.body;
 
     if (!global_brand_id) {
@@ -439,7 +430,7 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
     }
 
     // Get brand and pricing data
-    const result = await pool.query(`
+    const query = `
       SELECT 
         gb.*,
         pp.practice_price_per_box,
@@ -451,13 +442,15 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
       INNER JOIN practice_pricing pp ON gb.id = pp.global_brand_id
       INNER JOIN practices p ON pp.practice_id = p.id
       WHERE gb.id = $1 AND pp.practice_id = $2
-    `, [global_brand_id, req.user.id]);
+    `;
+
+    const result = await pool.query(query, [global_brand_id, req.user.id]);
+    const data = result.rows[0];
     
-    if (result.rows.length === 0) {
+    if (!data) {
       return res.status(404).json({ error: 'Brand not found or no pricing set' });
     }
 
-    const data = result.rows[0];
     const currentQuarter = getCurrentQuarter();
     
     // Get practice rebate for current quarter
@@ -465,27 +458,32 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
     const practiceRebateExisting = data[`existing_wearer_rebate_${currentQuarter}`] || 0;
     const practiceRebate = is_new_wearer ? practiceRebateNew : practiceRebateExisting;
 
-    // Get manufacturer rebate
+    // Get manufacturer rebate - NOW USING PRACTICE-SPECIFIC VALUES
     const manufacturerRebate = is_new_wearer ? 
       (data.practice_manufacturer_rebate_new || 0) : 
       (data.practice_manufacturer_rebate_existing || 0);
 
     // Calculate totals
-    const practiceSubtotal = parseFloat(data.practice_price_per_box) * data.boxes_per_annual;
-    const competitorSubtotal = parseFloat(data.competitor_price_per_box || 0) * data.boxes_per_annual;
+    const practiceSubtotal = data.practice_price_per_box * data.boxes_per_annual;
+    // Use actual 1-800 CONTACTS pricing
+    const competitorSubtotal = (data.competitor_price_per_box || 0) * data.boxes_per_annual;
     
     const insuranceBenefit = insurance_benefit || 0;
     
-    // Practice pricing calculations
+    // Practice pricing: in office today is subtotal minus insurance only
     const practiceInOfficeToday = Math.max(0, practiceSubtotal - insuranceBenefit);
-    const practiceAfterAllRebates = Math.max(0, practiceInOfficeToday - parseFloat(manufacturerRebate));
+    const practiceAfterRebate = Math.max(0, practiceSubtotal - practiceRebate);
     
-    // Competitor calculations
-    const competitorAnnualRebate = parseFloat(data.competitor_annual_rebate) || 0;
+    // Total after manufacturer rebate (what customer ultimately pays)
+    const practiceAfterAllRebates = Math.max(0, practiceInOfficeToday - manufacturerRebate);
+    const practiceFinalAmount = practiceAfterAllRebates;
+    
+    // Competitor: subtract their annual rebate from subtotal
+    const competitorAnnualRebate = data.competitor_annual_rebate || 0;
     const competitorFinalAmount = Math.max(0, competitorSubtotal - competitorAnnualRebate);
     
     // Calculate savings
-    const totalSavings = competitorFinalAmount - practiceAfterAllRebates;
+    const totalSavings = competitorFinalAmount - practiceFinalAmount;
     
     const comparison = {
       brand: {
@@ -494,17 +492,17 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
         boxes_per_annual: data.boxes_per_annual
       },
       practice: {
-        price_per_box: parseFloat(data.practice_price_per_box),
+        price_per_box: data.practice_price_per_box,
         subtotal: practiceSubtotal,
-        practice_rebate: parseFloat(practiceRebate),
-        manufacturer_rebate: parseFloat(manufacturerRebate),
+        practice_rebate: practiceRebate,
+        manufacturer_rebate: manufacturerRebate,
         insurance_applied: insuranceBenefit,
         in_office_today: practiceInOfficeToday,
-        final_amount_after_rebates: practiceAfterAllRebates
+        final_amount_after_rebates: practiceFinalAmount
       },
       competitor: {
         name: "1-800 Contacts",
-        price_per_box: parseFloat(data.competitor_price_per_box) || 0,
+        price_per_box: data.competitor_price_per_box || 0,
         subtotal: competitorSubtotal,
         annual_rebate: competitorAnnualRebate,
         note: "Out of network - no insurance benefits apply",
