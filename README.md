@@ -1,4 +1,13 @@
-# Getting Started with Create React App
+# Contact Lens Cost Comparison Tool
+
+A professional tool for optometry practices to compare contact lens pricing with online retailers.
+
+## Features
+- Practice-specific pricing management
+- Manufacturer rebate tracking
+- Price comparison with 1-800 CONTACTS
+- PDF generation for patient consultations
+- Master admin global brand management
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
