@@ -380,19 +380,21 @@ app.get('/api/admin/global-brands', authenticateToken, async (req, res) => {
 });
 
 // Add/Update global brand (master admin only)
-app.post('/api/admin/global-brands', authenticateToken, (req, res) => {
-  const {
-    brand_name,
-    boxes_per_annual,
-    competitor_price_per_box,
-    competitor_annual_rebate,
-    competitor_semiannual_rebate,
-    competitor_first_time_discount_percent
-  } = req.body;
+app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
+  try {
+    await ensureDB();
+    
+    const {
+      brand_name,
+      boxes_per_annual,
+      competitor_price_per_box,
+      competitor_annual_rebate,
+      competitor_semiannual_rebate,
+      competitor_first_time_discount_percent
+    } = req.body;
 
-  // Check if user is master admin
-  db.get('SELECT is_master_admin FROM practices WHERE id = ?', [req.user.id], (err, user) => {
-    if (err || !user || !user.is_master_admin) {
+    // Check if user is master admin (hardcoded check for demo)
+    if (req.user.email !== 'admin@contactlenstool.com') {
       return res.status(403).json({ error: 'Access denied. Master admin only.' });
     }
 
@@ -446,7 +448,10 @@ app.post('/api/admin/global-brands', authenticateToken, (req, res) => {
         res.json({ message: 'Global brand created successfully', id: this.lastID });
       });
     }
-  });
+  } catch (error) {
+    console.error('Global brand creation error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // ============================================
@@ -454,7 +459,9 @@ app.post('/api/admin/global-brands', authenticateToken, (req, res) => {
 // ============================================
 
 // Get available brands for practice pricing setup
-app.get('/api/available-brands', authenticateToken, (req, res) => {
+app.get('/api/available-brands', authenticateToken, async (req, res) => {
+  try {
+    await ensureDB();
   db.all(`
     SELECT 
       gb.*,
@@ -472,6 +479,10 @@ app.get('/api/available-brands', authenticateToken, (req, res) => {
     }
     res.json(brands);
   });
+  } catch (error) {
+    console.error('Available brands error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Update practice pricing for a brand
