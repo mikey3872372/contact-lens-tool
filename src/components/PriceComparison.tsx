@@ -69,19 +69,26 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
 
   const fetchBrands = async () => {
     try {
+      console.log('Fetching brands from:', `${config.apiUrl}/api/comparison-brands`);
       const response = await fetch(`${config.apiUrl}/api/comparison-brands`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
       });
       
+      console.log('Response status:', response.status);
+      
       if (response.ok) {
         const data = await response.json();
+        console.log('Brands data received:', data);
         setBrands(data);
       } else {
+        const errorText = await response.text();
+        console.error('Failed to fetch brands:', response.status, errorText);
         setError('Failed to fetch brands for comparison');
       }
     } catch (err) {
+      console.error('Network error fetching brands:', err);
       setError('Network error');
     }
   };
@@ -96,31 +103,50 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
       return;
     }
 
+    console.log('Starting comparison calculation...');
+    console.log('Selected brand ID:', selectedBrandId);
+    console.log('Insurance benefit:', insuranceBenefit);
+    console.log('Is new wearer:', isNewWearer);
+
     setLoading(true);
     setError('');
 
     try {
+      const requestBody = {
+        global_brand_id: selectedBrandId,
+        insurance_benefit: insuranceBenefit,
+        is_new_wearer: isNewWearer
+      };
+      
+      console.log('Request body:', requestBody);
+      
       const response = await fetch(`${config.apiUrl}/api/calculate-comparison`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
-        body: JSON.stringify({
-          global_brand_id: selectedBrandId,
-          insurance_benefit: insuranceBenefit,
-          is_new_wearer: isNewWearer
-        })
+        body: JSON.stringify(requestBody)
       });
+
+      console.log('Comparison response status:', response.status);
 
       if (response.ok) {
         const data = await response.json();
+        console.log('Comparison data received:', data);
         setComparison(data);
       } else {
-        const errorData = await response.json();
-        setError(errorData.error || 'Calculation failed');
+        const errorText = await response.text();
+        console.error('Calculation failed:', response.status, errorText);
+        try {
+          const errorData = JSON.parse(errorText);
+          setError(errorData.error || 'Calculation failed');
+        } catch {
+          setError(`Calculation failed: ${response.status}`);
+        }
       }
     } catch (err) {
+      console.error('Network error during calculation:', err);
       setError('Network error');
     } finally {
       setLoading(false);
@@ -190,11 +216,16 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
     }
   };
 
+  console.log('PriceComparison render - brands:', brands);
+  console.log('PriceComparison render - comparison:', comparison);
+  console.log('PriceComparison render - error:', error);
+
   if (brands.length === 0) {
     return (
       <div className="p-6">
         <h2 className="text-2xl font-bold text-gray-900 mb-4">Price Comparison Tool</h2>
         <p className="text-gray-600">No brands available for comparison.</p>
+        {error && <p className="text-red-600 mt-2">Error: {error}</p>}
       </div>
     );
   }
