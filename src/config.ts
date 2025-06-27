@@ -1,6 +1,6 @@
 const config = {
   apiUrl: process.env.NODE_ENV === 'production' 
-    ? 'https://contact-lens-tool.vercel.app' // Full URL for production Vercel deployment
+    ? '' // Use relative URLs in production to work with custom domains
     : 'http://localhost:3001'
 };
 
