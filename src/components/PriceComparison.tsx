@@ -150,7 +150,36 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
       if (response.ok) {
         const data = await response.json();
         console.log('Comparison data received:', data);
-        setComparison(data);
+        
+        // Convert string numbers to floats for PostgreSQL compatibility
+        const processedData = {
+          ...data,
+          practice: {
+            ...data.practice,
+            price_per_box: parseFloat(data.practice.price_per_box),
+            subtotal: parseFloat(data.practice.subtotal),
+            practice_rebate: parseFloat(data.practice.practice_rebate),
+            manufacturer_rebate: parseFloat(data.practice.manufacturer_rebate),
+            insurance_applied: parseFloat(data.practice.insurance_applied),
+            in_office_today: parseFloat(data.practice.in_office_today),
+            final_amount_after_rebates: parseFloat(data.practice.final_amount_after_rebates)
+          },
+          competitor: {
+            ...data.competitor,
+            price_per_box: parseFloat(data.competitor.price_per_box),
+            subtotal: parseFloat(data.competitor.subtotal),
+            annual_rebate: parseFloat(data.competitor.annual_rebate),
+            final_amount: parseFloat(data.competitor.final_amount)
+          },
+          savings: {
+            ...data.savings,
+            total_savings: parseFloat(data.savings.total_savings),
+            percentage_savings: parseFloat(data.savings.percentage_savings)
+          }
+        };
+        
+        console.log('Processed comparison data:', processedData);
+        setComparison(processedData);
       } else {
         const errorText = await response.text();
         console.error('Calculation failed:', response.status, errorText);
