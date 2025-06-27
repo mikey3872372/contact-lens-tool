@@ -486,13 +486,16 @@ app.get('/api/available-brands', authenticateToken, async (req, res) => {
 });
 
 // Update practice pricing for a brand
-app.post('/api/practice-pricing', authenticateToken, (req, res) => {
-  const { 
-    global_brand_id, 
-    practice_price_per_box,
-    practice_manufacturer_rebate_new,
-    practice_manufacturer_rebate_existing
-  } = req.body;
+app.post('/api/practice-pricing', authenticateToken, async (req, res) => {
+  try {
+    await ensureDB();
+    
+    const { 
+      global_brand_id, 
+      practice_price_per_box,
+      practice_manufacturer_rebate_new,
+      practice_manufacturer_rebate_existing
+    } = req.body;
 
   if (!global_brand_id) {
     return res.status(400).json({ error: 'Brand ID is required' });
@@ -563,10 +566,16 @@ app.post('/api/practice-pricing', authenticateToken, (req, res) => {
       });
     }
   });
+  } catch (error) {
+    console.error('Practice pricing error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Get practice settings (quarterly rebates)
-app.get('/api/practice-settings', authenticateToken, (req, res) => {
+app.get('/api/practice-settings', authenticateToken, async (req, res) => {
+  try {
+    await ensureDB();
   db.get(`
     SELECT 
       new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
@@ -579,10 +588,16 @@ app.get('/api/practice-settings', authenticateToken, (req, res) => {
     }
     res.json(settings || {});
   });
+  } catch (error) {
+    console.error('Practice settings error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Update practice settings (quarterly rebates)
-app.post('/api/practice-settings', authenticateToken, (req, res) => {
+app.post('/api/practice-settings', authenticateToken, async (req, res) => {
+  try {
+    await ensureDB();
   const {
     new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
     existing_wearer_rebate_q1, existing_wearer_rebate_q2, existing_wearer_rebate_q3, existing_wearer_rebate_q4
@@ -603,6 +618,10 @@ app.post('/api/practice-settings', authenticateToken, (req, res) => {
     }
     res.json({ message: 'Practice settings updated successfully' });
   });
+  } catch (error) {
+    console.error('Practice settings update error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // ============================================
@@ -610,7 +629,9 @@ app.post('/api/practice-settings', authenticateToken, (req, res) => {
 // ============================================
 
 // Get brands available for comparison (practice has pricing set)
-app.get('/api/comparison-brands', authenticateToken, (req, res) => {
+app.get('/api/comparison-brands', authenticateToken, async (req, res) => {
+  try {
+    await ensureDB();
   db.all(`
     SELECT 
       gb.id, gb.brand_name, gb.boxes_per_annual, gb.competitor_price_per_box,
@@ -626,11 +647,17 @@ app.get('/api/comparison-brands', authenticateToken, (req, res) => {
     }
     res.json(brands);
   });
+  } catch (error) {
+    console.error('Comparison brands error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Calculate price comparison
-app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
-  const { global_brand_id, insurance_benefit, is_new_wearer } = req.body;
+app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
+  try {
+    await ensureDB();
+    const { global_brand_id, insurance_benefit, is_new_wearer } = req.body;
 
   if (!global_brand_id) {
     return res.status(400).json({ error: 'Brand ID is required' });
@@ -728,6 +755,10 @@ app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
 
     res.json(comparison);
   });
+  } catch (error) {
+    console.error('Price comparison error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Don't start server in Vercel - it's handled by the platform
