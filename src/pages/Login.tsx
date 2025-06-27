@@ -26,6 +26,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         ? { name: formData.name, email: formData.email, password: formData.password }
         : { email: formData.email, password: formData.password };
 
+      console.log('Login attempt:', { url, body: { ...body, password: '[REDACTED]' } });
+
       const response = await fetch(url, {
         method: 'POST',
         headers: {
@@ -34,17 +36,29 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
         body: JSON.stringify(body),
       });
 
-      const data = await response.json();
+      console.log('Login response status:', response.status);
 
-      if (response.ok) {
-        localStorage.setItem('token', data.token);
-        localStorage.setItem('practice', JSON.stringify(data.practice));
-        onLogin(data.token, data.practice);
-      } else {
-        setError(data.error || 'An error occurred');
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.log('Login error response:', errorText);
+        try {
+          const errorData = JSON.parse(errorText);
+          setError(errorData.error || 'An error occurred');
+        } catch {
+          setError(`Login failed: ${response.status} ${response.statusText}`);
+        }
+        return;
       }
+
+      const data = await response.json();
+      console.log('Login successful:', { token: 'present', practice: data.practice });
+
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('practice', JSON.stringify(data.practice));
+      onLogin(data.token, data.practice);
     } catch (err) {
-      setError('Network error. Please check if the server is running.');
+      console.error('Login network error:', err);
+      setError(`Network error: ${err.message || 'Please check if the server is running.'}`);
     } finally {
       setLoading(false);
     }
