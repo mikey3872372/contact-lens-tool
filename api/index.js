@@ -1,8 +1,8 @@
 const express = require('express');
 const cors = require('cors');
-const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { pool, initializeDatabase, getCurrentQuarter } = require('./db');
 require('dotenv').config();
 
 const app = express();
@@ -27,203 +27,13 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Database setup - use temporary file for Vercel
-const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/contact-lens.db' : './contact-lens.db';
-let db;
-
-// Initialize database connection
-function initDB() {
-  return new Promise((resolve, reject) => {
-    db = new sqlite3.Database(dbPath, (err) => {
-      if (err) {
-        console.error('Error opening database:', err);
-        reject(err);
-      } else {
-        console.log('Connected to SQLite database');
-        initializeDatabase().then(resolve).catch(reject);
-      }
-    });
-  });
-}
-
-// Ensure database is initialized for each request
+// Initialize database on first request
+let dbInitialized = false;
 async function ensureDB() {
-  if (!db) {
-    await initDB();
+  if (!dbInitialized) {
+    await initializeDatabase();
+    dbInitialized = true;
   }
-  return db;
-}
-
-// Initialize database tables
-function initializeDatabase() {
-  return new Promise((resolve, reject) => {
-    db.serialize(() => {
-    // Create practices table
-    db.run(`
-      CREATE TABLE IF NOT EXISTS practices (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        email TEXT UNIQUE NOT NULL,
-        password TEXT NOT NULL,
-        is_master_admin BOOLEAN DEFAULT 0,
-        new_wearer_rebate_q1 REAL DEFAULT 0,
-        new_wearer_rebate_q2 REAL DEFAULT 0,
-        new_wearer_rebate_q3 REAL DEFAULT 0,
-        new_wearer_rebate_q4 REAL DEFAULT 0,
-        existing_wearer_rebate_q1 REAL DEFAULT 0,
-        existing_wearer_rebate_q2 REAL DEFAULT 0,
-        existing_wearer_rebate_q3 REAL DEFAULT 0,
-        existing_wearer_rebate_q4 REAL DEFAULT 0,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create global_lens_brands table (managed by master admin)
-    db.run(`
-      CREATE TABLE IF NOT EXISTS global_lens_brands (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        brand_name TEXT NOT NULL UNIQUE,
-        boxes_per_annual INTEGER NOT NULL,
-        competitor_annual_rebate REAL DEFAULT 0,
-        competitor_semiannual_rebate REAL DEFAULT 0,
-        competitor_first_time_discount_percent REAL DEFAULT 0,
-        is_active BOOLEAN DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Add new columns to existing global_lens_brands table if they don't exist
-    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_price_per_box REAL DEFAULT 0`, () => {});
-    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_annual_rebate REAL DEFAULT 0`, () => {});
-    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_semiannual_rebate REAL DEFAULT 0`, () => {});
-    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_first_time_discount_percent REAL DEFAULT 0`, () => {});
-    
-    // Remove old columns if they exist
-    db.run(`ALTER TABLE global_lens_brands DROP COLUMN replacement_schedule`, () => {});
-    db.run(`ALTER TABLE global_lens_brands DROP COLUMN manufacturer_rebate_new_wearer`, () => {});
-    db.run(`ALTER TABLE global_lens_brands DROP COLUMN manufacturer_rebate_existing_wearer`, () => {});
-
-    // Create practice_pricing table (practice-specific pricing and manufacturer rebates)
-    db.run(`
-      CREATE TABLE IF NOT EXISTS practice_pricing (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        practice_id INTEGER,
-        global_brand_id INTEGER,
-        practice_price_per_box REAL DEFAULT 0,
-        practice_manufacturer_rebate_new REAL DEFAULT 0,
-        practice_manufacturer_rebate_existing REAL DEFAULT 0,
-        is_active BOOLEAN DEFAULT 1,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (practice_id) REFERENCES practices (id),
-        FOREIGN KEY (global_brand_id) REFERENCES global_lens_brands (id),
-        UNIQUE(practice_id, global_brand_id)
-      )
-    `);
-
-    // Add manufacturer rebate columns to existing practice_pricing table if they don't exist
-    db.run(`ALTER TABLE practice_pricing ADD COLUMN practice_manufacturer_rebate_new REAL DEFAULT 0`, () => {});
-    db.run(`ALTER TABLE practice_pricing ADD COLUMN practice_manufacturer_rebate_existing REAL DEFAULT 0`, () => {});
-
-    // Create master admin account if it doesn't exist
-    db.get('SELECT id FROM practices WHERE is_master_admin = 1', async (err, row) => {
-      if (!row) {
-        try {
-          const hash = await bcrypt.hash('masteradmin123', 10);
-          db.run(`
-            INSERT INTO practices (name, email, password, is_master_admin) 
-            VALUES ('Master Admin', 'admin@contactlenstool.com', ?, 1)
-          `, [hash], (err) => {
-            if (err) {
-              console.error('Error creating master admin:', err);
-            } else {
-              console.log('Master admin account created successfully');
-            }
-          });
-        } catch (hashError) {
-          console.error('Error hashing password:', hashError);
-        }
-      } else {
-        console.log('Master admin account already exists');
-      }
-    });
-
-    // Insert default global brands if none exist
-    db.get('SELECT id FROM global_lens_brands LIMIT 1', (err, row) => {
-      if (!row) {
-        const brands = [
-          {
-            name: 'Acuvue Oasys',
-            boxes: 4,
-            competitor_price: 52.99,
-            annual_rebate: 25.00,
-            semiannual_rebate: 15.00,
-            first_time_discount: 10.0
-          },
-          {
-            name: 'Dailies Total1',
-            boxes: 12,
-            competitor_price: 49.99,
-            annual_rebate: 30.00,
-            semiannual_rebate: 20.00,
-            first_time_discount: 15.0
-          },
-          {
-            name: 'Air Optix Aqua',
-            boxes: 4,
-            competitor_price: 38.99,
-            annual_rebate: 20.00,
-            semiannual_rebate: 12.00,
-            first_time_discount: 8.0
-          },
-          {
-            name: 'Biofinity',
-            boxes: 4,
-            competitor_price: 35.99,
-            annual_rebate: 18.00,
-            semiannual_rebate: 10.00,
-            first_time_discount: 5.0
-          },
-          {
-            name: 'Acuvue Moist',
-            boxes: 12,
-            competitor_price: 45.99,
-            annual_rebate: 25.00,
-            semiannual_rebate: 15.00,
-            first_time_discount: 10.0
-          }
-        ];
-
-        brands.forEach(brand => {
-          db.run(`
-            INSERT INTO global_lens_brands 
-            (brand_name, boxes_per_annual, competitor_price_per_box, competitor_annual_rebate, 
-             competitor_semiannual_rebate, competitor_first_time_discount_percent) 
-            VALUES (?, ?, ?, ?, ?, ?)
-          `, [brand.name, brand.boxes, brand.competitor_price, brand.annual_rebate, 
-              brand.semiannual_rebate, brand.first_time_discount]);
-        });
-      }
-    });
-    
-    // Resolve after all tables are created
-    db.run('SELECT 1', (err) => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
-  });
-  });
-}
-
-// Helper function to get current quarter
-function getCurrentQuarter() {
-  const month = new Date().getMonth() + 1; // getMonth() returns 0-11
-  if (month <= 3) return 'q1';
-  if (month <= 6) return 'q2';
-  if (month <= 9) return 'q3';
-  return 'q4';
 }
 
 // Auth middleware
@@ -252,7 +62,7 @@ app.get('/api/health', async (req, res) => {
       status: 'Server is running!', 
       environment: process.env.NODE_ENV,
       timestamp: new Date().toISOString(),
-      database: 'Connected'
+      database: 'PostgreSQL Connected'
     });
   } catch (error) {
     res.status(500).json({ 
@@ -264,7 +74,7 @@ app.get('/api/health', async (req, res) => {
 
 // Root route for testing
 app.get('/', (req, res) => {
-  res.json({ message: 'Contact Lens Tool API is running' });
+  res.json({ message: 'Contact Lens Tool API is running with PostgreSQL' });
 });
 
 // User registration
@@ -279,26 +89,24 @@ app.post('/api/register', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     
-    db.run(
-      'INSERT INTO practices (name, email, password) VALUES (?, ?, ?)',
-      [name, email, hashedPassword],
-      function(err) {
-        if (err) {
-          if (err.code === 'SQLITE_CONSTRAINT') {
-            return res.status(400).json({ error: 'Email already exists' });
-          }
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        const token = jwt.sign({ id: this.lastID, email }, JWT_SECRET);
-        res.status(201).json({
-          message: 'Practice registered successfully',
-          token,
-          practice: { id: this.lastID, name, email }
-        });
-      }
+    const result = await pool.query(
+      'INSERT INTO practices (name, email, password) VALUES ($1, $2, $3) RETURNING id, name, email',
+      [name, email, hashedPassword]
     );
+    
+    const practice = result.rows[0];
+    const token = jwt.sign({ id: practice.id, email: practice.email }, JWT_SECRET);
+    
+    res.status(201).json({
+      message: 'Practice registered successfully',
+      token,
+      practice
+    });
   } catch (error) {
+    if (error.code === '23505') { // Unique constraint violation
+      return res.status(400).json({ error: 'Email already exists' });
+    }
+    console.error('Registration error:', error);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -323,32 +131,24 @@ app.post('/api/login', async (req, res) => {
       });
     }
 
-    db.get(
-      'SELECT * FROM practices WHERE email = ?',
-      [email],
-      async (err, practice) => {
-        if (err) {
-          console.error('Database error in login:', err);
-          return res.status(500).json({ error: 'Database error' });
-        }
-        
-        if (!practice) {
-          return res.status(400).json({ error: 'Invalid credentials' });
-        }
+    const result = await pool.query('SELECT * FROM practices WHERE email = $1', [email]);
+    const practice = result.rows[0];
+    
+    if (!practice) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
 
-        const isValidPassword = await bcrypt.compare(password, practice.password);
-        if (!isValidPassword) {
-          return res.status(400).json({ error: 'Invalid credentials' });
-        }
+    const isValidPassword = await bcrypt.compare(password, practice.password);
+    if (!isValidPassword) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
 
-        const token = jwt.sign({ id: practice.id, email: practice.email }, JWT_SECRET);
-        res.json({
-          message: 'Login successful',
-          token,
-          practice: { id: practice.id, name: practice.name, email: practice.email }
-        });
-      }
-    );
+    const token = jwt.sign({ id: practice.id, email: practice.email }, JWT_SECRET);
+    res.json({
+      message: 'Login successful',
+      token,
+      practice: { id: practice.id, name: practice.name, email: practice.email }
+    });
   } catch (error) {
     console.error('Login error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -356,17 +156,14 @@ app.post('/api/login', async (req, res) => {
 });
 
 // Protected routes
-app.get('/api/profile', authenticateToken, (req, res) => {
-  db.get(
-    'SELECT id, name, email FROM practices WHERE id = ?',
-    [req.user.id],
-    (err, practice) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json(practice);
-    }
-  );
+app.get('/api/profile', authenticateToken, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT id, name, email FROM practices WHERE id = $1', [req.user.id]);
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Profile error:', error);
+    res.status(500).json({ error: 'Database error' });
+  }
 });
 
 // ============================================
@@ -380,12 +177,8 @@ app.get('/api/admin/global-brands', authenticateToken, async (req, res) => {
     
     // Check if user is master admin (hardcoded check for demo)
     if (req.user.email === 'admin@contactlenstool.com') {
-      db.all('SELECT * FROM global_lens_brands ORDER BY brand_name', (err, brands) => {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        res.json(brands);
-      });
+      const result = await pool.query('SELECT * FROM global_lens_brands ORDER BY brand_name');
+      res.json(result.rows);
     } else {
       return res.status(403).json({ error: 'Access denied. Master admin only.' });
     }
@@ -423,11 +216,12 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
     
     if (id) {
       // Update existing brand
-      db.run(`
+      await pool.query(`
         UPDATE global_lens_brands 
-        SET brand_name = ?, boxes_per_annual = ?, competitor_price_per_box = ?, competitor_annual_rebate = ?, 
-            competitor_semiannual_rebate = ?, competitor_first_time_discount_percent = ?
-        WHERE id = ?
+        SET brand_name = $1, boxes_per_annual = $2, competitor_price_per_box = $3, 
+            competitor_annual_rebate = $4, competitor_semiannual_rebate = $5, 
+            competitor_first_time_discount_percent = $6
+        WHERE id = $7
       `, [
         brand_name,
         parseInt(boxes_per_annual),
@@ -436,19 +230,15 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
         parseFloat(competitor_semiannual_rebate) || 0,
         parseFloat(competitor_first_time_discount_percent) || 0,
         id
-      ], function(err) {
-        if (err) {
-          console.error('Database update error:', err);
-          return res.status(500).json({ error: 'Database error: ' + err.message });
-        }
-        res.json({ message: 'Global brand updated successfully', id: id });
-      });
+      ]);
+      res.json({ message: 'Global brand updated successfully', id: id });
     } else {
       // Insert new brand
-      db.run(`
+      const result = await pool.query(`
         INSERT INTO global_lens_brands 
-        (brand_name, boxes_per_annual, competitor_price_per_box, competitor_annual_rebate, competitor_semiannual_rebate, competitor_first_time_discount_percent) 
-        VALUES (?, ?, ?, ?, ?, ?)
+        (brand_name, boxes_per_annual, competitor_price_per_box, competitor_annual_rebate, 
+         competitor_semiannual_rebate, competitor_first_time_discount_percent) 
+        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id
       `, [
         brand_name,
         parseInt(boxes_per_annual),
@@ -456,13 +246,8 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
         parseFloat(competitor_annual_rebate) || 0,
         parseFloat(competitor_semiannual_rebate) || 0,
         parseFloat(competitor_first_time_discount_percent) || 0
-      ], function(err) {
-        if (err) {
-          console.error('Database insert error:', err);
-          return res.status(500).json({ error: 'Database error: ' + err.message });
-        }
-        res.json({ message: 'Global brand created successfully', id: this.lastID });
-      });
+      ]);
+      res.json({ message: 'Global brand created successfully', id: result.rows[0].id });
     }
   } catch (error) {
     console.error('Global brand creation error:', error);
@@ -478,23 +263,19 @@ app.post('/api/admin/global-brands', authenticateToken, async (req, res) => {
 app.get('/api/available-brands', authenticateToken, async (req, res) => {
   try {
     await ensureDB();
-  db.all(`
-    SELECT 
-      gb.*,
-      pp.practice_price_per_box,
-      pp.practice_manufacturer_rebate_new,
-      pp.practice_manufacturer_rebate_existing,
-      pp.is_active as practice_active
-    FROM global_lens_brands gb
-    LEFT JOIN practice_pricing pp ON gb.id = pp.global_brand_id AND pp.practice_id = ?
-    WHERE gb.is_active = 1
-    ORDER BY gb.brand_name
-  `, [req.user.id], (err, brands) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(brands);
-  });
+    const result = await pool.query(`
+      SELECT 
+        gb.*,
+        pp.practice_price_per_box,
+        pp.practice_manufacturer_rebate_new,
+        pp.practice_manufacturer_rebate_existing,
+        pp.is_active as practice_active
+      FROM global_lens_brands gb
+      LEFT JOIN practice_pricing pp ON gb.id = pp.global_brand_id AND pp.practice_id = $1
+      WHERE gb.is_active = TRUE
+      ORDER BY gb.brand_name
+    `, [req.user.id]);
+    res.json(result.rows);
   } catch (error) {
     console.error('Available brands error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -513,75 +294,48 @@ app.post('/api/practice-pricing', authenticateToken, async (req, res) => {
       practice_manufacturer_rebate_existing
     } = req.body;
 
-  if (!global_brand_id) {
-    return res.status(400).json({ error: 'Brand ID is required' });
-  }
-
-  // Build the update fields dynamically based on what's provided
-  const updateFields = [];
-  const updateValues = [];
-  
-  if (practice_price_per_box !== undefined) {
-    updateFields.push('practice_price_per_box = ?');
-    updateValues.push(practice_price_per_box);
-  }
-  
-  if (practice_manufacturer_rebate_new !== undefined) {
-    updateFields.push('practice_manufacturer_rebate_new = ?');
-    updateValues.push(practice_manufacturer_rebate_new);
-  }
-  
-  if (practice_manufacturer_rebate_existing !== undefined) {
-    updateFields.push('practice_manufacturer_rebate_existing = ?');
-    updateValues.push(practice_manufacturer_rebate_existing);
-  }
-
-  if (updateFields.length === 0) {
-    return res.status(400).json({ error: 'At least one field to update is required' });
-  }
-
-  // Check if record exists first
-  db.get(`
-    SELECT id FROM practice_pricing 
-    WHERE practice_id = ? AND global_brand_id = ?
-  `, [req.user.id, global_brand_id], (err, existing) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
+    if (!global_brand_id) {
+      return res.status(400).json({ error: 'Brand ID is required' });
     }
 
-    if (existing) {
+    // Check if record exists first
+    const existing = await pool.query(`
+      SELECT id FROM practice_pricing 
+      WHERE practice_id = $1 AND global_brand_id = $2
+    `, [req.user.id, global_brand_id]);
+
+    if (existing.rows.length > 0) {
       // Update existing record
-      updateValues.push(req.user.id, global_brand_id);
-      db.run(`
+      await pool.query(`
         UPDATE practice_pricing 
-        SET ${updateFields.join(', ')}, created_at = CURRENT_TIMESTAMP
-        WHERE practice_id = ? AND global_brand_id = ?
-      `, updateValues, function(err) {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        res.json({ message: 'Practice data updated successfully' });
-      });
+        SET practice_price_per_box = $1, practice_manufacturer_rebate_new = $2, 
+            practice_manufacturer_rebate_existing = $3, created_at = CURRENT_TIMESTAMP
+        WHERE practice_id = $4 AND global_brand_id = $5
+      `, [
+        practice_price_per_box || 0,
+        practice_manufacturer_rebate_new || 0,
+        practice_manufacturer_rebate_existing || 0,
+        req.user.id, 
+        global_brand_id
+      ]);
+      res.json({ message: 'Practice data updated successfully' });
     } else {
-      // Create new record with provided values and defaults for missing fields
-      db.run(`
+      // Create new record
+      await pool.query(`
         INSERT INTO practice_pricing 
-        (practice_id, global_brand_id, practice_price_per_box, practice_manufacturer_rebate_new, practice_manufacturer_rebate_existing, is_active) 
-        VALUES (?, ?, ?, ?, ?)
+        (practice_id, global_brand_id, practice_price_per_box, practice_manufacturer_rebate_new, 
+         practice_manufacturer_rebate_existing, is_active) 
+        VALUES ($1, $2, $3, $4, $5, $6)
       `, [
         req.user.id, 
         global_brand_id, 
         practice_price_per_box || 0,
         practice_manufacturer_rebate_new || 0,
-        practice_manufacturer_rebate_existing || 0
-      ], function(err) {
-        if (err) {
-          return res.status(500).json({ error: 'Database error' });
-        }
-        res.json({ message: 'Practice data created successfully' });
-      });
+        practice_manufacturer_rebate_existing || 0,
+        true
+      ]);
+      res.json({ message: 'Practice data created successfully' });
     }
-  });
   } catch (error) {
     console.error('Practice pricing error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -592,18 +346,14 @@ app.post('/api/practice-pricing', authenticateToken, async (req, res) => {
 app.get('/api/practice-settings', authenticateToken, async (req, res) => {
   try {
     await ensureDB();
-  db.get(`
-    SELECT 
-      new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
-      existing_wearer_rebate_q1, existing_wearer_rebate_q2, existing_wearer_rebate_q3, existing_wearer_rebate_q4
-    FROM practices 
-    WHERE id = ?
-  `, [req.user.id], (err, settings) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(settings || {});
-  });
+    const result = await pool.query(`
+      SELECT 
+        new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
+        existing_wearer_rebate_q1, existing_wearer_rebate_q2, existing_wearer_rebate_q3, existing_wearer_rebate_q4
+      FROM practices 
+      WHERE id = $1
+    `, [req.user.id]);
+    res.json(result.rows[0] || {});
   } catch (error) {
     console.error('Practice settings error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -614,26 +364,22 @@ app.get('/api/practice-settings', authenticateToken, async (req, res) => {
 app.post('/api/practice-settings', authenticateToken, async (req, res) => {
   try {
     await ensureDB();
-  const {
-    new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
-    existing_wearer_rebate_q1, existing_wearer_rebate_q2, existing_wearer_rebate_q3, existing_wearer_rebate_q4
-  } = req.body;
+    const {
+      new_wearer_rebate_q1, new_wearer_rebate_q2, new_wearer_rebate_q3, new_wearer_rebate_q4,
+      existing_wearer_rebate_q1, existing_wearer_rebate_q2, existing_wearer_rebate_q3, existing_wearer_rebate_q4
+    } = req.body;
 
-  db.run(`
-    UPDATE practices 
-    SET new_wearer_rebate_q1 = ?, new_wearer_rebate_q2 = ?, new_wearer_rebate_q3 = ?, new_wearer_rebate_q4 = ?,
-        existing_wearer_rebate_q1 = ?, existing_wearer_rebate_q2 = ?, existing_wearer_rebate_q3 = ?, existing_wearer_rebate_q4 = ?
-    WHERE id = ?
-  `, [
-    new_wearer_rebate_q1 || 0, new_wearer_rebate_q2 || 0, new_wearer_rebate_q3 || 0, new_wearer_rebate_q4 || 0,
-    existing_wearer_rebate_q1 || 0, existing_wearer_rebate_q2 || 0, existing_wearer_rebate_q3 || 0, existing_wearer_rebate_q4 || 0,
-    req.user.id
-  ], function(err) {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
+    await pool.query(`
+      UPDATE practices 
+      SET new_wearer_rebate_q1 = $1, new_wearer_rebate_q2 = $2, new_wearer_rebate_q3 = $3, new_wearer_rebate_q4 = $4,
+          existing_wearer_rebate_q1 = $5, existing_wearer_rebate_q2 = $6, existing_wearer_rebate_q3 = $7, existing_wearer_rebate_q4 = $8
+      WHERE id = $9
+    `, [
+      new_wearer_rebate_q1 || 0, new_wearer_rebate_q2 || 0, new_wearer_rebate_q3 || 0, new_wearer_rebate_q4 || 0,
+      existing_wearer_rebate_q1 || 0, existing_wearer_rebate_q2 || 0, existing_wearer_rebate_q3 || 0, existing_wearer_rebate_q4 || 0,
+      req.user.id
+    ]);
     res.json({ message: 'Practice settings updated successfully' });
-  });
   } catch (error) {
     console.error('Practice settings update error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -648,21 +394,17 @@ app.post('/api/practice-settings', authenticateToken, async (req, res) => {
 app.get('/api/comparison-brands', authenticateToken, async (req, res) => {
   try {
     await ensureDB();
-  db.all(`
-    SELECT 
-      gb.id, gb.brand_name, gb.boxes_per_annual, gb.competitor_price_per_box,
-      gb.competitor_annual_rebate, gb.competitor_semiannual_rebate, gb.competitor_first_time_discount_percent,
-      pp.practice_price_per_box, pp.practice_manufacturer_rebate_new, pp.practice_manufacturer_rebate_existing
-    FROM global_lens_brands gb
-    INNER JOIN practice_pricing pp ON gb.id = pp.global_brand_id 
-    WHERE pp.practice_id = ? AND pp.is_active = 1 AND gb.is_active = 1
-    ORDER BY gb.brand_name
-  `, [req.user.id], (err, brands) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
-    }
-    res.json(brands);
-  });
+    const result = await pool.query(`
+      SELECT 
+        gb.id, gb.brand_name, gb.boxes_per_annual, gb.competitor_price_per_box,
+        gb.competitor_annual_rebate, gb.competitor_semiannual_rebate, gb.competitor_first_time_discount_percent,
+        pp.practice_price_per_box, pp.practice_manufacturer_rebate_new, pp.practice_manufacturer_rebate_existing
+      FROM global_lens_brands gb
+      INNER JOIN practice_pricing pp ON gb.id = pp.global_brand_id 
+      WHERE pp.practice_id = $1 AND pp.is_active = TRUE AND gb.is_active = TRUE
+      ORDER BY gb.brand_name
+    `, [req.user.id]);
+    res.json(result.rows);
   } catch (error) {
     console.error('Comparison brands error:', error);
     res.status(500).json({ error: 'Server error' });
@@ -675,34 +417,30 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
     await ensureDB();
     const { global_brand_id, insurance_benefit, is_new_wearer } = req.body;
 
-  if (!global_brand_id) {
-    return res.status(400).json({ error: 'Brand ID is required' });
-  }
-
-  // Get brand and pricing data
-  const query = `
-    SELECT 
-      gb.*,
-      pp.practice_price_per_box,
-      pp.practice_manufacturer_rebate_new,
-      pp.practice_manufacturer_rebate_existing,
-      p.new_wearer_rebate_q1, p.new_wearer_rebate_q2, p.new_wearer_rebate_q3, p.new_wearer_rebate_q4,
-      p.existing_wearer_rebate_q1, p.existing_wearer_rebate_q2, p.existing_wearer_rebate_q3, p.existing_wearer_rebate_q4
-    FROM global_lens_brands gb
-    INNER JOIN practice_pricing pp ON gb.id = pp.global_brand_id
-    INNER JOIN practices p ON pp.practice_id = p.id
-    WHERE gb.id = ? AND pp.practice_id = ?
-  `;
-
-  db.get(query, [global_brand_id, req.user.id], (err, data) => {
-    if (err) {
-      return res.status(500).json({ error: 'Database error' });
+    if (!global_brand_id) {
+      return res.status(400).json({ error: 'Brand ID is required' });
     }
+
+    // Get brand and pricing data
+    const result = await pool.query(`
+      SELECT 
+        gb.*,
+        pp.practice_price_per_box,
+        pp.practice_manufacturer_rebate_new,
+        pp.practice_manufacturer_rebate_existing,
+        p.new_wearer_rebate_q1, p.new_wearer_rebate_q2, p.new_wearer_rebate_q3, p.new_wearer_rebate_q4,
+        p.existing_wearer_rebate_q1, p.existing_wearer_rebate_q2, p.existing_wearer_rebate_q3, p.existing_wearer_rebate_q4
+      FROM global_lens_brands gb
+      INNER JOIN practice_pricing pp ON gb.id = pp.global_brand_id
+      INNER JOIN practices p ON pp.practice_id = p.id
+      WHERE gb.id = $1 AND pp.practice_id = $2
+    `, [global_brand_id, req.user.id]);
     
-    if (!data) {
+    if (result.rows.length === 0) {
       return res.status(404).json({ error: 'Brand not found or no pricing set' });
     }
 
+    const data = result.rows[0];
     const currentQuarter = getCurrentQuarter();
     
     // Get practice rebate for current quarter
@@ -710,32 +448,27 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
     const practiceRebateExisting = data[`existing_wearer_rebate_${currentQuarter}`] || 0;
     const practiceRebate = is_new_wearer ? practiceRebateNew : practiceRebateExisting;
 
-    // Get manufacturer rebate - NOW USING PRACTICE-SPECIFIC VALUES
+    // Get manufacturer rebate
     const manufacturerRebate = is_new_wearer ? 
       (data.practice_manufacturer_rebate_new || 0) : 
       (data.practice_manufacturer_rebate_existing || 0);
 
     // Calculate totals
-    const practiceSubtotal = data.practice_price_per_box * data.boxes_per_annual;
-    // Use actual 1-800 CONTACTS pricing
-    const competitorSubtotal = (data.competitor_price_per_box || 0) * data.boxes_per_annual;
+    const practiceSubtotal = parseFloat(data.practice_price_per_box) * data.boxes_per_annual;
+    const competitorSubtotal = parseFloat(data.competitor_price_per_box || 0) * data.boxes_per_annual;
     
     const insuranceBenefit = insurance_benefit || 0;
     
-    // Practice pricing: in office today is subtotal minus insurance only
+    // Practice pricing calculations
     const practiceInOfficeToday = Math.max(0, practiceSubtotal - insuranceBenefit);
-    const practiceAfterRebate = Math.max(0, practiceSubtotal - practiceRebate);
+    const practiceAfterAllRebates = Math.max(0, practiceInOfficeToday - parseFloat(manufacturerRebate));
     
-    // Total after manufacturer rebate (what customer ultimately pays)
-    const practiceAfterAllRebates = Math.max(0, practiceInOfficeToday - manufacturerRebate);
-    const practiceFinalAmount = practiceAfterAllRebates;
-    
-    // Competitor: subtract their annual rebate from subtotal
-    const competitorAnnualRebate = data.competitor_annual_rebate || 0;
+    // Competitor calculations
+    const competitorAnnualRebate = parseFloat(data.competitor_annual_rebate) || 0;
     const competitorFinalAmount = Math.max(0, competitorSubtotal - competitorAnnualRebate);
     
     // Calculate savings
-    const totalSavings = competitorFinalAmount - practiceFinalAmount;
+    const totalSavings = competitorFinalAmount - practiceAfterAllRebates;
     
     const comparison = {
       brand: {
@@ -744,17 +477,17 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
         boxes_per_annual: data.boxes_per_annual
       },
       practice: {
-        price_per_box: data.practice_price_per_box,
+        price_per_box: parseFloat(data.practice_price_per_box),
         subtotal: practiceSubtotal,
-        practice_rebate: practiceRebate,
-        manufacturer_rebate: manufacturerRebate,
+        practice_rebate: parseFloat(practiceRebate),
+        manufacturer_rebate: parseFloat(manufacturerRebate),
         insurance_applied: insuranceBenefit,
         in_office_today: practiceInOfficeToday,
-        final_amount_after_rebates: practiceFinalAmount
+        final_amount_after_rebates: practiceAfterAllRebates
       },
       competitor: {
         name: "1-800 Contacts",
-        price_per_box: data.competitor_price_per_box || 0,
+        price_per_box: parseFloat(data.competitor_price_per_box) || 0,
         subtotal: competitorSubtotal,
         annual_rebate: competitorAnnualRebate,
         note: "Out of network - no insurance benefits apply",
@@ -770,7 +503,6 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
     };
 
     res.json(comparison);
-  });
   } catch (error) {
     console.error('Price comparison error:', error);
     res.status(500).json({ error: 'Server error' });
