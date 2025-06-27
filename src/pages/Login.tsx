@@ -58,7 +58,8 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       onLogin(data.token, data.practice);
     } catch (err) {
       console.error('Login network error:', err);
-      setError(`Network error: ${err.message || 'Please check if the server is running.'}`);
+      const errorMessage = err instanceof Error ? err.message : 'Please check if the server is running.';
+      setError(`Network error: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
