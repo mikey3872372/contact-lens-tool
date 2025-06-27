@@ -57,6 +57,8 @@ interface PriceComparisonProps {
 }
 
 const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
+  console.log('PriceComparison component initializing with token:', token ? 'present' : 'missing');
+  
   const [brands, setBrands] = useState<ComparisonBrand[]>([]);
   const [selectedBrandId, setSelectedBrandId] = useState<number | null>(null);
   const [insuranceBenefit, setInsuranceBenefit] = useState<number>(0);
@@ -66,6 +68,35 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
   const [error, setError] = useState('');
   const [generatePdfLoading, setGeneratePdfLoading] = useState(false);
   const comparisonRef = useRef<HTMLDivElement>(null);
+
+  // Error boundary-like behavior
+  const [hasError, setHasError] = useState(false);
+  
+  useEffect(() => {
+    const handleError = (event: ErrorEvent) => {
+      console.error('JavaScript error caught:', event.error);
+      setHasError(true);
+      setError(`JavaScript error: ${event.error?.message || 'Unknown error'}`);
+    };
+    
+    window.addEventListener('error', handleError);
+    return () => window.removeEventListener('error', handleError);
+  }, []);
+  
+  if (hasError) {
+    return (
+      <div className="p-6">
+        <h2 className="text-2xl font-bold text-red-600 mb-4">Error in Price Comparison</h2>
+        <p className="text-red-600">An error occurred: {error}</p>
+        <button 
+          onClick={() => {setHasError(false); setError(''); window.location.reload();}} 
+          className="mt-4 bg-blue-500 text-white px-4 py-2 rounded"
+        >
+          Reload Page
+        </button>
+      </div>
+    );
+  }
 
   const fetchBrands = async () => {
     try {
@@ -230,12 +261,14 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
     );
   }
 
-  return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="text-center mb-8">
-        <h2 className="text-3xl font-bold text-gray-900 mb-2">💰 Price Comparison Tool</h2>
-        <p className="text-gray-600">Compare your practice pricing with 1-800 CONTACTS</p>
-      </div>
+  try {
+    return (
+      <div className="p-6 max-w-6xl mx-auto">
+        <div className="text-center mb-8">
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">💰 Price Comparison Tool</h2>
+          <p className="text-gray-600">Compare your practice pricing with 1-800 CONTACTS</p>
+          <p className="text-sm text-gray-500 mt-2">Debug: Component rendering successfully</p>
+        </div>
       
       {error && (
         <div className="mb-6 p-4 bg-red-50 border-l-4 border-red-400 text-red-700 rounded-r-lg">
@@ -481,7 +514,22 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
         </div>
       )}
     </div>
-  );
+    );
+  } catch (renderError) {
+    console.error('Render error in PriceComparison:', renderError);
+    return (
+      <div className="p-6">
+        <h2 className="text-2xl font-bold text-red-600 mb-4">Render Error</h2>
+        <p className="text-red-600">Failed to render component: {String(renderError)}</p>
+        <button 
+          onClick={() => window.location.reload()} 
+          className="mt-4 bg-blue-500 text-white px-4 py-2 rounded"
+        >
+          Reload Page
+        </button>
+      </div>
+    );
+  }
 };
 
 export default PriceComparison;
