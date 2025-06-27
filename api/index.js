@@ -147,44 +147,60 @@ function initializeDatabase() {
       }
     });
 
-    // Insert some default global brands if none exist
+    // Insert default global brands if none exist
     db.get('SELECT id FROM global_lens_brands LIMIT 1', (err, row) => {
       if (!row) {
         const brands = [
           {
             name: 'Acuvue Oasys',
-            schedule: 'biweekly',
             boxes: 4,
             competitor_price: 52.99,
-            rebate_new: 100.00,
-            rebate_existing: 50.00
+            annual_rebate: 25.00,
+            semiannual_rebate: 15.00,
+            first_time_discount: 10.0
           },
           {
             name: 'Dailies Total1',
-            schedule: 'daily',
             boxes: 12,
             competitor_price: 49.99,
-            rebate_new: 150.00,
-            rebate_existing: 75.00
+            annual_rebate: 30.00,
+            semiannual_rebate: 20.00,
+            first_time_discount: 15.0
           },
           {
             name: 'Air Optix Aqua',
-            schedule: 'monthly',
             boxes: 4,
             competitor_price: 38.99,
-            rebate_new: 80.00,
-            rebate_existing: 40.00
+            annual_rebate: 20.00,
+            semiannual_rebate: 12.00,
+            first_time_discount: 8.0
+          },
+          {
+            name: 'Biofinity',
+            boxes: 4,
+            competitor_price: 35.99,
+            annual_rebate: 18.00,
+            semiannual_rebate: 10.00,
+            first_time_discount: 5.0
+          },
+          {
+            name: 'Acuvue Moist',
+            boxes: 12,
+            competitor_price: 45.99,
+            annual_rebate: 25.00,
+            semiannual_rebate: 15.00,
+            first_time_discount: 10.0
           }
         ];
 
         brands.forEach(brand => {
           db.run(`
             INSERT INTO global_lens_brands 
-            (brand_name, replacement_schedule, boxes_per_annual, competitor_price_per_box, 
-             manufacturer_rebate_new_wearer, manufacturer_rebate_existing_wearer) 
+            (brand_name, boxes_per_annual, competitor_price_per_box, competitor_annual_rebate, 
+             competitor_semiannual_rebate, competitor_first_time_discount_percent) 
             VALUES (?, ?, ?, ?, ?, ?)
-          `, [brand.name, brand.schedule, brand.boxes, brand.competitor_price, 
-              brand.rebate_new, brand.rebate_existing]);
+          `, [brand.name, brand.boxes, brand.competitor_price, brand.annual_rebate, 
+              brand.semiannual_rebate, brand.first_time_discount]);
         });
       }
     });
