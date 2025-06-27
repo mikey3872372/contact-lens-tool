@@ -82,21 +82,10 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
     window.addEventListener('error', handleError);
     return () => window.removeEventListener('error', handleError);
   }, []);
-  
-  if (hasError) {
-    return (
-      <div className="p-6">
-        <h2 className="text-2xl font-bold text-red-600 mb-4">Error in Price Comparison</h2>
-        <p className="text-red-600">An error occurred: {error}</p>
-        <button 
-          onClick={() => {setHasError(false); setError(''); window.location.reload();}} 
-          className="mt-4 bg-blue-500 text-white px-4 py-2 rounded"
-        >
-          Reload Page
-        </button>
-      </div>
-    );
-  }
+
+  useEffect(() => {
+    fetchBrands();
+  }, []);
 
   const fetchBrands = async () => {
     try {
@@ -123,10 +112,6 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
       setError('Network error');
     }
   };
-
-  useEffect(() => {
-    fetchBrands();
-  }, []);
 
   const calculateComparison = async () => {
     if (!selectedBrandId) {
@@ -250,6 +235,21 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
   console.log('PriceComparison render - brands:', brands);
   console.log('PriceComparison render - comparison:', comparison);
   console.log('PriceComparison render - error:', error);
+
+  if (hasError) {
+    return (
+      <div className="p-6">
+        <h2 className="text-2xl font-bold text-red-600 mb-4">Error in Price Comparison</h2>
+        <p className="text-red-600">An error occurred: {error}</p>
+        <button 
+          onClick={() => {setHasError(false); setError(''); window.location.reload();}} 
+          className="mt-4 bg-blue-500 text-white px-4 py-2 rounded"
+        >
+          Reload Page
+        </button>
+      </div>
+    );
+  }
 
   if (brands.length === 0) {
     return (
