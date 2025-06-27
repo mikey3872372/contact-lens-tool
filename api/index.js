@@ -478,8 +478,8 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
     const practiceAfterAllRebates = Math.max(0, practiceInOfficeToday - manufacturerRebate);
     const practiceFinalAmount = practiceAfterAllRebates;
     
-    // Competitor: subtract their annual rebate from subtotal
-    const competitorAnnualRebate = data.competitor_annual_rebate || 0;
+    // Competitor: subtract their annual rebate from subtotal - ensure it's always a number
+    const competitorAnnualRebate = parseFloat(data.competitor_annual_rebate) || 0;
     const competitorFinalAmount = Math.max(0, competitorSubtotal - competitorAnnualRebate);
     
     // Calculate savings
@@ -502,7 +502,7 @@ app.post('/api/calculate-comparison', authenticateToken, async (req, res) => {
       },
       competitor: {
         name: "1-800 Contacts",
-        price_per_box: data.competitor_price_per_box || 0,
+        price_per_box: parseFloat(data.competitor_price_per_box) || 0,
         subtotal: competitorSubtotal,
         annual_rebate: competitorAnnualRebate,
         note: "Out of network - no insurance benefits apply",
