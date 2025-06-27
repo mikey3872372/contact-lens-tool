@@ -6,19 +6,20 @@ import config from '../config';
 interface ComparisonBrand {
   id: number;
   brand_name: string;
-  replacement_schedule: string;
   boxes_per_annual: number;
   competitor_price_per_box: number;
-  manufacturer_rebate_new_wearer: number;
-  manufacturer_rebate_existing_wearer: number;
+  competitor_annual_rebate: number;
+  competitor_semiannual_rebate: number;
+  competitor_first_time_discount_percent: number;
   practice_price_per_box: number;
+  practice_manufacturer_rebate_new: number;
+  practice_manufacturer_rebate_existing: number;
 }
 
 interface Comparison {
   brand: {
     id: number;
     name: string;
-    replacement_schedule: string;
     boxes_per_annual: number;
   };
   practice: {
