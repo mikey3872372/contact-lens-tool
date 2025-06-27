@@ -7,6 +7,11 @@ require('dotenv').config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// For Vercel deployment
+if (process.env.NODE_ENV === 'production') {
+  module.exports = app;
+}
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 // Middleware
@@ -51,23 +56,35 @@ function initializeDatabase() {
       CREATE TABLE IF NOT EXISTS global_lens_brands (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         brand_name TEXT NOT NULL UNIQUE,
-        replacement_schedule TEXT NOT NULL,
         boxes_per_annual INTEGER NOT NULL,
-        competitor_price_per_box REAL NOT NULL,
-        manufacturer_rebate_new_wearer REAL DEFAULT 0,
-        manufacturer_rebate_existing_wearer REAL DEFAULT 0,
+        competitor_annual_rebate REAL DEFAULT 0,
+        competitor_semiannual_rebate REAL DEFAULT 0,
+        competitor_first_time_discount_percent REAL DEFAULT 0,
         is_active BOOLEAN DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
 
-    // Create practice_pricing table (practice-specific pricing only)
+    // Add new columns to existing global_lens_brands table if they don't exist
+    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_price_per_box REAL DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_annual_rebate REAL DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_semiannual_rebate REAL DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE global_lens_brands ADD COLUMN competitor_first_time_discount_percent REAL DEFAULT 0`, () => {});
+    
+    // Remove old columns if they exist
+    db.run(`ALTER TABLE global_lens_brands DROP COLUMN replacement_schedule`, () => {});
+    db.run(`ALTER TABLE global_lens_brands DROP COLUMN manufacturer_rebate_new_wearer`, () => {});
+    db.run(`ALTER TABLE global_lens_brands DROP COLUMN manufacturer_rebate_existing_wearer`, () => {});
+
+    // Create practice_pricing table (practice-specific pricing and manufacturer rebates)
     db.run(`
       CREATE TABLE IF NOT EXISTS practice_pricing (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         practice_id INTEGER,
         global_brand_id INTEGER,
-        practice_price_per_box REAL NOT NULL,
+        practice_price_per_box REAL DEFAULT 0,
+        practice_manufacturer_rebate_new REAL DEFAULT 0,
+        practice_manufacturer_rebate_existing REAL DEFAULT 0,
         is_active BOOLEAN DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (practice_id) REFERENCES practices (id),
@@ -75,6 +92,10 @@ function initializeDatabase() {
         UNIQUE(practice_id, global_brand_id)
       )
     `);
+
+    // Add manufacturer rebate columns to existing practice_pricing table if they don't exist
+    db.run(`ALTER TABLE practice_pricing ADD COLUMN practice_manufacturer_rebate_new REAL DEFAULT 0`, () => {});
+    db.run(`ALTER TABLE practice_pricing ADD COLUMN practice_manufacturer_rebate_existing REAL DEFAULT 0`, () => {});
 
     // Create master admin account if it doesn't exist
     db.get('SELECT id FROM practices WHERE is_master_admin = 1', (err, row) => {
@@ -276,10 +297,11 @@ app.get('/api/admin/global-brands', authenticateToken, (req, res) => {
 app.post('/api/admin/global-brands', authenticateToken, (req, res) => {
   const {
     brand_name,
-    replacement_schedule,
+    boxes_per_annual,
     competitor_price_per_box,
-    manufacturer_rebate_new_wearer,
-    manufacturer_rebate_existing_wearer
+    competitor_annual_rebate,
+    competitor_semiannual_rebate,
+    competitor_first_time_discount_percent
   } = req.body;
 
   // Check if user is master admin
@@ -288,33 +310,56 @@ app.post('/api/admin/global-brands', authenticateToken, (req, res) => {
       return res.status(403).json({ error: 'Access denied. Master admin only.' });
     }
 
-    const boxesPerAnnual = {
-      'daily': 12,
-      'weekly': 9,
-      'biweekly': 4,
-      'monthly': 4
-    };
+    if (!brand_name || !boxes_per_annual) {
+      return res.status(400).json({ error: 'Brand name and boxes per year are required' });
+    }
 
-    const boxes_per_annual = boxesPerAnnual[replacement_schedule] || 4;
-
-    db.run(`
-      INSERT OR REPLACE INTO global_lens_brands 
-      (brand_name, replacement_schedule, boxes_per_annual, competitor_price_per_box, 
-       manufacturer_rebate_new_wearer, manufacturer_rebate_existing_wearer) 
-      VALUES (?, ?, ?, ?, ?, ?)
-    `, [
-      brand_name,
-      replacement_schedule,
-      boxes_per_annual,
-      competitor_price_per_box,
-      manufacturer_rebate_new_wearer || 0,
-      manufacturer_rebate_existing_wearer || 0
-    ], function(err) {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      res.json({ message: 'Global brand updated successfully', id: this.lastID });
-    });
+    // Check if we're updating an existing brand (if ID is provided)
+    const id = req.body.id;
+    
+    if (id) {
+      // Update existing brand
+      db.run(`
+        UPDATE global_lens_brands 
+        SET brand_name = ?, boxes_per_annual = ?, competitor_price_per_box = ?, competitor_annual_rebate = ?, 
+            competitor_semiannual_rebate = ?, competitor_first_time_discount_percent = ?
+        WHERE id = ?
+      `, [
+        brand_name,
+        parseInt(boxes_per_annual),
+        parseFloat(competitor_price_per_box) || 0,
+        parseFloat(competitor_annual_rebate) || 0,
+        parseFloat(competitor_semiannual_rebate) || 0,
+        parseFloat(competitor_first_time_discount_percent) || 0,
+        id
+      ], function(err) {
+        if (err) {
+          console.error('Database update error:', err);
+          return res.status(500).json({ error: 'Database error: ' + err.message });
+        }
+        res.json({ message: 'Global brand updated successfully', id: id });
+      });
+    } else {
+      // Insert new brand
+      db.run(`
+        INSERT INTO global_lens_brands 
+        (brand_name, boxes_per_annual, competitor_price_per_box, competitor_annual_rebate, competitor_semiannual_rebate, competitor_first_time_discount_percent) 
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [
+        brand_name,
+        parseInt(boxes_per_annual),
+        parseFloat(competitor_price_per_box) || 0,
+        parseFloat(competitor_annual_rebate) || 0,
+        parseFloat(competitor_semiannual_rebate) || 0,
+        parseFloat(competitor_first_time_discount_percent) || 0
+      ], function(err) {
+        if (err) {
+          console.error('Database insert error:', err);
+          return res.status(500).json({ error: 'Database error: ' + err.message });
+        }
+        res.json({ message: 'Global brand created successfully', id: this.lastID });
+      });
+    }
   });
 });
 
@@ -328,6 +373,8 @@ app.get('/api/available-brands', authenticateToken, (req, res) => {
     SELECT 
       gb.*,
       pp.practice_price_per_box,
+      pp.practice_manufacturer_rebate_new,
+      pp.practice_manufacturer_rebate_existing,
       pp.is_active as practice_active
     FROM global_lens_brands gb
     LEFT JOIN practice_pricing pp ON gb.id = pp.global_brand_id AND pp.practice_id = ?
@@ -343,21 +390,81 @@ app.get('/api/available-brands', authenticateToken, (req, res) => {
 
 // Update practice pricing for a brand
 app.post('/api/practice-pricing', authenticateToken, (req, res) => {
-  const { global_brand_id, practice_price_per_box } = req.body;
+  const { 
+    global_brand_id, 
+    practice_price_per_box,
+    practice_manufacturer_rebate_new,
+    practice_manufacturer_rebate_existing
+  } = req.body;
 
-  if (!global_brand_id || !practice_price_per_box) {
-    return res.status(400).json({ error: 'Brand ID and price are required' });
+  if (!global_brand_id) {
+    return res.status(400).json({ error: 'Brand ID is required' });
   }
 
-  db.run(`
-    INSERT OR REPLACE INTO practice_pricing 
-    (practice_id, global_brand_id, practice_price_per_box) 
-    VALUES (?, ?, ?)
-  `, [req.user.id, global_brand_id, practice_price_per_box], function(err) {
+  // Build the update fields dynamically based on what's provided
+  const updateFields = [];
+  const updateValues = [];
+  
+  if (practice_price_per_box !== undefined) {
+    updateFields.push('practice_price_per_box = ?');
+    updateValues.push(practice_price_per_box);
+  }
+  
+  if (practice_manufacturer_rebate_new !== undefined) {
+    updateFields.push('practice_manufacturer_rebate_new = ?');
+    updateValues.push(practice_manufacturer_rebate_new);
+  }
+  
+  if (practice_manufacturer_rebate_existing !== undefined) {
+    updateFields.push('practice_manufacturer_rebate_existing = ?');
+    updateValues.push(practice_manufacturer_rebate_existing);
+  }
+
+  if (updateFields.length === 0) {
+    return res.status(400).json({ error: 'At least one field to update is required' });
+  }
+
+  // Check if record exists first
+  db.get(`
+    SELECT id FROM practice_pricing 
+    WHERE practice_id = ? AND global_brand_id = ?
+  `, [req.user.id, global_brand_id], (err, existing) => {
     if (err) {
       return res.status(500).json({ error: 'Database error' });
     }
-    res.json({ message: 'Practice pricing updated successfully' });
+
+    if (existing) {
+      // Update existing record
+      updateValues.push(req.user.id, global_brand_id);
+      db.run(`
+        UPDATE practice_pricing 
+        SET ${updateFields.join(', ')}, created_at = CURRENT_TIMESTAMP
+        WHERE practice_id = ? AND global_brand_id = ?
+      `, updateValues, function(err) {
+        if (err) {
+          return res.status(500).json({ error: 'Database error' });
+        }
+        res.json({ message: 'Practice data updated successfully' });
+      });
+    } else {
+      // Create new record with provided values and defaults for missing fields
+      db.run(`
+        INSERT INTO practice_pricing 
+        (practice_id, global_brand_id, practice_price_per_box, practice_manufacturer_rebate_new, practice_manufacturer_rebate_existing, is_active) 
+        VALUES (?, ?, ?, ?, ?)
+      `, [
+        req.user.id, 
+        global_brand_id, 
+        practice_price_per_box || 0,
+        practice_manufacturer_rebate_new || 0,
+        practice_manufacturer_rebate_existing || 0
+      ], function(err) {
+        if (err) {
+          return res.status(500).json({ error: 'Database error' });
+        }
+        res.json({ message: 'Practice data created successfully' });
+      });
+    }
   });
 });
 
@@ -409,9 +516,9 @@ app.post('/api/practice-settings', authenticateToken, (req, res) => {
 app.get('/api/comparison-brands', authenticateToken, (req, res) => {
   db.all(`
     SELECT 
-      gb.id, gb.brand_name, gb.replacement_schedule, gb.boxes_per_annual,
-      gb.competitor_price_per_box, gb.manufacturer_rebate_new_wearer, gb.manufacturer_rebate_existing_wearer,
-      pp.practice_price_per_box
+      gb.id, gb.brand_name, gb.boxes_per_annual, gb.competitor_price_per_box,
+      gb.competitor_annual_rebate, gb.competitor_semiannual_rebate, gb.competitor_first_time_discount_percent,
+      pp.practice_price_per_box, pp.practice_manufacturer_rebate_new, pp.practice_manufacturer_rebate_existing
     FROM global_lens_brands gb
     INNER JOIN practice_pricing pp ON gb.id = pp.global_brand_id 
     WHERE pp.practice_id = ? AND pp.is_active = 1 AND gb.is_active = 1
@@ -437,6 +544,8 @@ app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
     SELECT 
       gb.*,
       pp.practice_price_per_box,
+      pp.practice_manufacturer_rebate_new,
+      pp.practice_manufacturer_rebate_existing,
       p.new_wearer_rebate_q1, p.new_wearer_rebate_q2, p.new_wearer_rebate_q3, p.new_wearer_rebate_q4,
       p.existing_wearer_rebate_q1, p.existing_wearer_rebate_q2, p.existing_wearer_rebate_q3, p.existing_wearer_rebate_q4
     FROM global_lens_brands gb
@@ -461,25 +570,29 @@ app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
     const practiceRebateExisting = data[`existing_wearer_rebate_${currentQuarter}`] || 0;
     const practiceRebate = is_new_wearer ? practiceRebateNew : practiceRebateExisting;
 
-    // Get manufacturer rebate
-    const manufacturerRebate = is_new_wearer ? data.manufacturer_rebate_new_wearer : data.manufacturer_rebate_existing_wearer;
+    // Get manufacturer rebate - NOW USING PRACTICE-SPECIFIC VALUES
+    const manufacturerRebate = is_new_wearer ? 
+      (data.practice_manufacturer_rebate_new || 0) : 
+      (data.practice_manufacturer_rebate_existing || 0);
 
     // Calculate totals
     const practiceSubtotal = data.practice_price_per_box * data.boxes_per_annual;
-    const competitorSubtotal = data.competitor_price_per_box * data.boxes_per_annual;
+    // Use actual 1-800 CONTACTS pricing
+    const competitorSubtotal = (data.competitor_price_per_box || 0) * data.boxes_per_annual;
     
     const insuranceBenefit = insurance_benefit || 0;
     
-    // Practice pricing: subtract practice rebate and insurance
+    // Practice pricing: in office today is subtotal minus insurance only
+    const practiceInOfficeToday = Math.max(0, practiceSubtotal - insuranceBenefit);
     const practiceAfterRebate = Math.max(0, practiceSubtotal - practiceRebate);
-    const practiceInOfficeToday = Math.max(0, practiceAfterRebate - insuranceBenefit);
     
     // Total after manufacturer rebate (what customer ultimately pays)
-    const practiceAfterAllRebates = Math.max(0, practiceAfterRebate - manufacturerRebate);
-    const practiceFinalAmount = Math.max(0, practiceAfterAllRebates - insuranceBenefit);
+    const practiceAfterAllRebates = Math.max(0, practiceInOfficeToday - manufacturerRebate);
+    const practiceFinalAmount = practiceAfterAllRebates;
     
-    // Competitor: no rebates, note that it's out of network
-    const competitorFinalAmount = competitorSubtotal;
+    // Competitor: subtract their annual rebate from subtotal
+    const competitorAnnualRebate = data.competitor_annual_rebate || 0;
+    const competitorFinalAmount = Math.max(0, competitorSubtotal - competitorAnnualRebate);
     
     // Calculate savings
     const totalSavings = competitorFinalAmount - practiceFinalAmount;
@@ -488,7 +601,6 @@ app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
       brand: {
         id: data.id,
         name: data.brand_name,
-        replacement_schedule: data.replacement_schedule,
         boxes_per_annual: data.boxes_per_annual
       },
       practice: {
@@ -502,8 +614,9 @@ app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
       },
       competitor: {
         name: "1-800 Contacts",
-        price_per_box: data.competitor_price_per_box,
+        price_per_box: data.competitor_price_per_box || 0,
         subtotal: competitorSubtotal,
+        annual_rebate: competitorAnnualRebate,
         note: "Out of network - no insurance benefits apply",
         final_amount: competitorFinalAmount
       },
@@ -520,6 +633,9 @@ app.post('/api/calculate-comparison', authenticateToken, (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-});
+// Only start server if not in Vercel
+if (process.env.NODE_ENV !== 'production') {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+}

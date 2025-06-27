@@ -1,5 +1,8 @@
-import React, { useState } from 'react';
-import LensBrandManager from '../components/LensBrandManager';
+import React, { useState, useEffect } from 'react';
+import MasterAdminPanel from '../components/MasterAdminPanel';
+import PracticePricing from '../components/PracticePricing';
+import PracticeSettings from '../components/PracticeSettings';
+import PriceComparison from '../components/PriceComparison';
 
 interface DashboardProps {
   practice: any;
@@ -8,13 +11,34 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ practice, onLogout }) => {
   const [activeTab, setActiveTab] = useState('brands');
+  const [isMasterAdmin, setIsMasterAdmin] = useState(false);
   const token = localStorage.getItem('token') || '';
 
-  const tabs = [
-    { id: 'brands', name: 'Lens Brands', icon: '👓' },
-    { id: 'comparison', name: 'Price Comparison', icon: '💰' },
-    { id: 'settings', name: 'Settings', icon: '⚙️' }
+  useEffect(() => {
+    // Check if user is master admin based on email
+    const isAdmin = practice?.email === 'admin@contactlenstool.com';
+    setIsMasterAdmin(isAdmin);
+    
+    // Set default tab based on user type
+    if (isAdmin) {
+      setActiveTab('admin');
+    } else {
+      setActiveTab('brands');
+    }
+  }, [practice]);
+
+  const masterAdminTabs = [
+    { id: 'admin', name: 'Global Brand Management', icon: '🔥' },
+    { id: 'comparison', name: 'Price Comparison', icon: '💰' }
   ];
+
+  const practiceTabs = [
+    { id: 'brands', name: 'Your Pricing', icon: '💲' },
+    { id: 'comparison', name: 'Price Comparison', icon: '💰' },
+    { id: 'settings', name: 'Practice Settings', icon: '⚙️' }
+  ];
+
+  const tabs = isMasterAdmin ? masterAdminTabs : practiceTabs;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -62,34 +86,23 @@ const Dashboard: React.FC<DashboardProps> = ({ practice, onLogout }) => {
 
         {/* Tab Content */}
         <div className="bg-white rounded-lg shadow">
-          {activeTab === 'brands' && (
-            <LensBrandManager token={token} />
+          {/* Master Admin Views */}
+          {isMasterAdmin && activeTab === 'admin' && (
+            <MasterAdminPanel token={token} />
           )}
           
+          {/* Practice Views */}
+          {!isMasterAdmin && activeTab === 'brands' && (
+            <PracticePricing token={token} />
+          )}
+          
+          {!isMasterAdmin && activeTab === 'settings' && (
+            <PracticeSettings token={token} />
+          )}
+          
+          {/* Shared Views */}
           {activeTab === 'comparison' && (
-            <div className="p-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Price Comparison Tool</h2>
-              <div className="border-4 border-dashed border-gray-200 rounded-lg h-64 flex items-center justify-center">
-                <div className="text-center">
-                  <p className="text-gray-600">
-                    Price comparison interface coming in Day 3!
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-          
-          {activeTab === 'settings' && (
-            <div className="p-6">
-              <h2 className="text-2xl font-bold text-gray-900 mb-4">Practice Settings</h2>
-              <div className="border-4 border-dashed border-gray-200 rounded-lg h-64 flex items-center justify-center">
-                <div className="text-center">
-                  <p className="text-gray-600">
-                    Practice settings coming soon!
-                  </p>
-                </div>
-              </div>
-            </div>
+            <PriceComparison token={token} practice={practice} />
           )}
         </div>
       </div>

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import config from '../config';
 
 interface LensBrand {
   id?: number;
@@ -42,7 +43,7 @@ const LensBrandManager: React.FC<LensBrandManagerProps> = ({ token }) => {
   const fetchBrands = React.useCallback(async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:3001/api/lens-brands', {
+      const response = await fetch(`${config.apiUrl}/api/lens-brands`, {
         headers: {
           'Authorization': `Bearer ${token}`
         }
@@ -72,8 +73,8 @@ const LensBrandManager: React.FC<LensBrandManagerProps> = ({ token }) => {
 
     try {
       const url = editingBrand 
-        ? `http://localhost:3001/api/lens-brands/${editingBrand.id}`
-        : 'http://localhost:3001/api/lens-brands';
+        ? `${config.apiUrl}/api/lens-brands/${editingBrand.id}`
+        : `${config.apiUrl}/api/lens-brands`;
       
       const method = editingBrand ? 'PUT' : 'POST';
 
@@ -112,7 +113,7 @@ const LensBrandManager: React.FC<LensBrandManagerProps> = ({ token }) => {
     }
 
     try {
-      const response = await fetch(`http://localhost:3001/api/lens-brands/${id}`, {
+      const response = await fetch(`${config.apiUrl}/api/lens-brands/${id}`, {
         method: 'DELETE',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -252,7 +253,8 @@ const LensBrandManager: React.FC<LensBrandManagerProps> = ({ token }) => {
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">New Wearer Rebate</label>
+                  <label className="block text-sm font-medium text-gray-700">Manufacturer Rebate - New Wearer</label>
+                  <p className="text-xs text-green-600 mb-1">Exclusive to private practices - NOT available at 1-800-CONTACTS</p>
                   <input
                     type="number"
                     name="new_wearer_rebate"
@@ -265,7 +267,8 @@ const LensBrandManager: React.FC<LensBrandManagerProps> = ({ token }) => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Existing Wearer Rebate</label>
+                  <label className="block text-sm font-medium text-gray-700">Manufacturer Rebate - Existing Wearer</label>
+                  <p className="text-xs text-green-600 mb-1">Exclusive to private practices - NOT available at 1-800-CONTACTS</p>
                   <input
                     type="number"
                     name="existing_wearer_rebate"
@@ -346,10 +349,14 @@ const LensBrandManager: React.FC<LensBrandManagerProps> = ({ token }) => {
                     
                     <div className="mt-2 grid grid-cols-2 gap-4 text-sm text-gray-600">
                       <div>
-                        <span className="font-medium">New Wearer Rebate:</span> ${brand.new_wearer_rebate}
+                        <span className="font-medium">Manufacturer Rebate (New):</span> 
+                        <span className="text-green-600">${brand.new_wearer_rebate}</span>
+                        <span className="text-xs text-green-600 block">Private practice exclusive</span>
                       </div>
                       <div>
-                        <span className="font-medium">Existing Wearer Rebate:</span> ${brand.existing_wearer_rebate}
+                        <span className="font-medium">Manufacturer Rebate (Existing):</span> 
+                        <span className="text-green-600">${brand.existing_wearer_rebate}</span>
+                        <span className="text-xs text-green-600 block">Private practice exclusive</span>
                       </div>
                     </div>
                   </div>

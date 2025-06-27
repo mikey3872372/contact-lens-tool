@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import config from '../config';
 
 interface LoginProps {
   onLogin: (token: string, practice: any) => void;
@@ -20,7 +21,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     setError('');
 
     try {
-      const url = isRegister ? 'http://localhost:3001/api/register' : 'http://localhost:3001/api/login';
+      const url = isRegister ? `${config.apiUrl}/api/register` : `${config.apiUrl}/api/login`;
       const body = isRegister 
         ? { name: formData.name, email: formData.email, password: formData.password }
         : { email: formData.email, password: formData.password };
