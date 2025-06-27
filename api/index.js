@@ -13,11 +13,23 @@ module.exports = app;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-change-in-production';
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://contact-lens-tool.vercel.app', 'https://contact-lens-tool-*.vercel.app']
+    : ['http://localhost:3000'],
+  credentials: true
+}));
 app.use(express.json());
 
-// Database setup
-const db = new sqlite3.Database('./contact-lens.db', (err) => {
+// Add error handling middleware
+app.use((err, req, res, next) => {
+  console.error('Error:', err);
+  res.status(500).json({ error: 'Internal server error' });
+});
+
+// Database setup - use memory database for Vercel
+const dbPath = process.env.NODE_ENV === 'production' ? ':memory:' : './contact-lens.db';
+const db = new sqlite3.Database(dbPath, (err) => {
   if (err) {
     console.error('Error opening database:', err);
   } else {
@@ -183,7 +195,16 @@ const authenticateToken = (req, res, next) => {
 
 // Routes
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'Server is running!' });
+  res.json({ 
+    status: 'Server is running!', 
+    environment: process.env.NODE_ENV,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Root route for testing
+app.get('/', (req, res) => {
+  res.json({ message: 'Contact Lens Tool API is running' });
 });
 
 // User registration
