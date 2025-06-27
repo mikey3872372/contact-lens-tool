@@ -27,20 +27,37 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
-// Database setup - use memory database for Vercel
-const dbPath = process.env.NODE_ENV === 'production' ? ':memory:' : './contact-lens.db';
-const db = new sqlite3.Database(dbPath, (err) => {
-  if (err) {
-    console.error('Error opening database:', err);
-  } else {
-    console.log('Connected to SQLite database');
-    initializeDatabase();
+// Database setup - use temporary file for Vercel
+const dbPath = process.env.NODE_ENV === 'production' ? '/tmp/contact-lens.db' : './contact-lens.db';
+let db;
+
+// Initialize database connection
+function initDB() {
+  return new Promise((resolve, reject) => {
+    db = new sqlite3.Database(dbPath, (err) => {
+      if (err) {
+        console.error('Error opening database:', err);
+        reject(err);
+      } else {
+        console.log('Connected to SQLite database');
+        initializeDatabase().then(resolve).catch(reject);
+      }
+    });
+  });
+}
+
+// Ensure database is initialized for each request
+async function ensureDB() {
+  if (!db) {
+    await initDB();
   }
-});
+  return db;
+}
 
 // Initialize database tables
 function initializeDatabase() {
-  db.serialize(() => {
+  return new Promise((resolve, reject) => {
+    db.serialize(() => {
     // Create practices table
     db.run(`
       CREATE TABLE IF NOT EXISTS practices (
@@ -163,6 +180,16 @@ function initializeDatabase() {
         });
       }
     });
+    
+    // Resolve after all tables are created
+    db.run('SELECT 1', (err) => {
+      if (err) {
+        reject(err);
+      } else {
+        resolve();
+      }
+    });
+  });
   });
 }
 
@@ -194,12 +221,21 @@ const authenticateToken = (req, res, next) => {
 };
 
 // Routes
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'Server is running!', 
-    environment: process.env.NODE_ENV,
-    timestamp: new Date().toISOString()
-  });
+app.get('/api/health', async (req, res) => {
+  try {
+    await ensureDB();
+    res.json({ 
+      status: 'Server is running!', 
+      environment: process.env.NODE_ENV,
+      timestamp: new Date().toISOString(),
+      database: 'Connected'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'Database error',
+      error: error.message 
+    });
+  }
 });
 
 // Root route for testing
@@ -210,6 +246,7 @@ app.get('/', (req, res) => {
 // User registration
 app.post('/api/register', async (req, res) => {
   try {
+    await ensureDB();
     const { name, email, password } = req.body;
     
     if (!name || !email || !password) {
@@ -243,38 +280,45 @@ app.post('/api/register', async (req, res) => {
 });
 
 // User login
-app.post('/api/login', (req, res) => {
-  const { email, password } = req.body;
+app.post('/api/login', async (req, res) => {
+  try {
+    await ensureDB();
+    const { email, password } = req.body;
   
-  if (!email || !password) {
-    return res.status(400).json({ error: 'Email and password are required' });
-  }
-
-  db.get(
-    'SELECT * FROM practices WHERE email = ?',
-    [email],
-    async (err, practice) => {
-      if (err) {
-        return res.status(500).json({ error: 'Database error' });
-      }
-      
-      if (!practice) {
-        return res.status(400).json({ error: 'Invalid credentials' });
-      }
-
-      const isValidPassword = await bcrypt.compare(password, practice.password);
-      if (!isValidPassword) {
-        return res.status(400).json({ error: 'Invalid credentials' });
-      }
-
-      const token = jwt.sign({ id: practice.id, email: practice.email }, JWT_SECRET);
-      res.json({
-        message: 'Login successful',
-        token,
-        practice: { id: practice.id, name: practice.name, email: practice.email }
-      });
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
     }
-  );
+
+    db.get(
+      'SELECT * FROM practices WHERE email = ?',
+      [email],
+      async (err, practice) => {
+        if (err) {
+          console.error('Database error in login:', err);
+          return res.status(500).json({ error: 'Database error' });
+        }
+        
+        if (!practice) {
+          return res.status(400).json({ error: 'Invalid credentials' });
+        }
+
+        const isValidPassword = await bcrypt.compare(password, practice.password);
+        if (!isValidPassword) {
+          return res.status(400).json({ error: 'Invalid credentials' });
+        }
+
+        const token = jwt.sign({ id: practice.id, email: practice.email }, JWT_SECRET);
+        res.json({
+          message: 'Login successful',
+          token,
+          practice: { id: practice.id, name: practice.name, email: practice.email }
+        });
+      }
+    );
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // Protected routes
