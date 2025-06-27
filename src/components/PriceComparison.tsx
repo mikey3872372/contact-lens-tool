@@ -368,8 +368,11 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
               </label>
               <input
                 type="number"
-                value={insuranceBenefit}
-                onChange={(e) => setInsuranceBenefit(Number(e.target.value))}
+                value={insuranceBenefit || ''}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setInsuranceBenefit(value === '' ? 0 : Number(value));
+                }}
                 step="0.01"
                 min="0"
                 placeholder="0.00"
@@ -500,13 +503,11 @@ const PriceComparison: React.FC<PriceComparisonProps> = ({ token }) => {
                   </div>
                 </div>
                 
-                {/* 1-800 Contacts annual rebate (after today total) */}
-                {comparison.competitor.annual_rebate > 0 && (
-                  <div className="flex justify-between items-center p-3 bg-orange-100 rounded-lg shadow-sm border-l-4 border-orange-400">
-                    <span className="text-orange-700">💰 1-800 CONTACTS rebate (later):</span>
-                    <span className="font-bold text-orange-600">-${comparison.competitor.annual_rebate.toFixed(2)}</span>
-                  </div>
-                )}
+                {/* 1-800 Contacts annual rebate (after today total) - always show for consistency */}
+                <div className="flex justify-between items-center p-3 bg-orange-100 rounded-lg shadow-sm border-l-4 border-orange-400">
+                  <span className="text-orange-700">💰 1-800 CONTACTS rebate (later):</span>
+                  <span className="font-bold text-orange-600">-${comparison.competitor.annual_rebate.toFixed(2)}</span>
+                </div>
                 
                 <div className="border-t-2 border-red-300 pt-4">
                   <div className="flex justify-between items-center p-4 bg-gradient-to-r from-red-500 to-red-600 rounded-lg shadow-lg text-white">
